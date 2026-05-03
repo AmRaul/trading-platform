@@ -178,8 +178,6 @@ class BotCreate(BaseModel):
         v = v.upper().strip()
         if not v.endswith('USDT'):
             raise ValueError('Only USDT pairs supported (e.g., BTCUSDT)')
-        if len(v) < 6:  # Minimum: BTCUSDT = 7 chars
-            raise ValueError('Invalid symbol format')
         return v
 
     @validator('side')
