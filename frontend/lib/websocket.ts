@@ -5,9 +5,16 @@ class WebSocketClient {
   private url: string;
   private reconnectInterval: number = 5000;
   private handlers: Map<string, Set<MessageHandler>> = new Map();
+  private reconnectHandlers: Set<() => void> = new Set();
+  private isFirstConnect: boolean = true;
 
   constructor() {
     this.url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+  }
+
+  onReconnect(handler: () => void) {
+    this.reconnectHandlers.add(handler);
+    return () => this.reconnectHandlers.delete(handler);
   }
 
   connect() {
@@ -19,6 +26,10 @@ class WebSocketClient {
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
+      if (!this.isFirstConnect) {
+        this.reconnectHandlers.forEach((h) => h());
+      }
+      this.isFirstConnect = false;
     };
 
     this.ws.onmessage = (event) => {

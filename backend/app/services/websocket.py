@@ -165,21 +165,23 @@ class PriceStreamManager:
 
     async def register_strategy(self, bot_id: int):
         """Register a strategy engine for price updates"""
-        async with AsyncSessionLocal() as db:
-            engine = StrategyEngine(bot_id, db)
-            await engine.initialize()
-            self.strategy_engines[bot_id] = engine
-            self.registered_bots.add(bot_id)
+        # Session must stay open for the lifetime of the engine
+        db = AsyncSessionLocal()
+        engine = StrategyEngine(bot_id, db)
+        await engine.initialize()
+        self.strategy_engines[bot_id] = engine
+        self.registered_bots.add(bot_id)
 
-            # Start price stream for this symbol
-            await self.start_price_stream(engine.bot.symbol)
+        # Start price stream for this symbol
+        await self.start_price_stream(engine.bot.symbol)
 
-            logger.info(f"Registered strategy for bot {bot_id}, symbol: {engine.bot.symbol}")
+        logger.info(f"Registered strategy for bot {bot_id}, symbol: {engine.bot.symbol}")
 
     def unregister_strategy(self, bot_id: int):
-        """Unregister strategy engine"""
+        """Unregister strategy engine and close its DB session"""
         if bot_id in self.strategy_engines:
-            del self.strategy_engines[bot_id]
+            engine = self.strategy_engines.pop(bot_id)
+            asyncio.create_task(engine.db.close())
         if bot_id in self.registered_bots:
             self.registered_bots.discard(bot_id)
         logger.info(f"Unregistered strategy for bot {bot_id}")

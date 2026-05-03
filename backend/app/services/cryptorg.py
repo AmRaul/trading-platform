@@ -70,7 +70,7 @@ class CryptorgClient:
                     "enabled": True,
                     "event": "percentage",
                     "value": str(sl_percent),
-                    "delay": 0
+                    "delay": 3
                 }
             }
         }

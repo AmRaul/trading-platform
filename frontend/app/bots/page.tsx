@@ -18,6 +18,7 @@ export default function BotsPage() {
   const { data: bots } = useQuery({
     queryKey: ['bots'],
     queryFn: async () => (await botsApi.getAll()).data,
+    refetchInterval: 5000,
   });
 
   // Seed position store from REST response and subscribe to WS
@@ -51,21 +52,33 @@ export default function BotsPage() {
       });
     });
 
-    const unsubSL = wsClient.subscribe('stop_loss_triggered', (data: any) => {
-      clearPosition(data.bot_id);
+    const handlePositionClosed = (bot_id: number) => {
+      clearPosition(bot_id);
+      // Optimistically set bot state to IDLE in cache so UI updates immediately
+      queryClient.setQueryData(['bots'], (old: any) => {
+        if (!Array.isArray(old)) return old;
+        return old.map((b: any) =>
+          b.id === bot_id ? { ...b, state: 'IDLE', open_position: null } : b
+        );
+      });
       queryClient.invalidateQueries({ queryKey: ['bots'] });
-      // Delayed refetch in case DB hasn't committed yet when first query fires
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['bots'] }), 2000);
+    };
+
+    const unsubSL = wsClient.subscribe('stop_loss_triggered', (data: any) => {
+      handlePositionClosed(data.bot_id);
     });
 
     const unsubClosed = wsClient.subscribe('position_closed', (data: any) => {
-      clearPosition(data.bot_id);
-      queryClient.invalidateQueries({ queryKey: ['bots'] });
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['bots'] }), 2000);
+      handlePositionClosed(data.bot_id);
     });
 
     const unsubPrice = wsClient.subscribe('price_update', (data: any) => {
       updatePrice(data.symbol, data.price);
+    });
+
+    const unsubReconnect = wsClient.onReconnect(() => {
+      queryClient.invalidateQueries({ queryKey: ['bots'] });
     });
 
     return () => {
@@ -74,6 +87,7 @@ export default function BotsPage() {
       unsubSL();
       unsubClosed();
       unsubPrice();
+      unsubReconnect();
     };
   }, []);
 

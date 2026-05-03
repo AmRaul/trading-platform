@@ -239,6 +239,10 @@ class StrategyEngine:
             )
 
         try:
+            # Bail out immediately if close or order add is in progress
+            if self._is_closing or not self.position or not self.position.is_open:
+                return
+
             # 1. Check if Stop Loss hit
             if self.position_manager.is_stop_loss_hit(
                 self.bot.side,
