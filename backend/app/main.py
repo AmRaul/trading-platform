@@ -7,7 +7,15 @@ from app.core.redis import init_redis, close_redis
 from app.api.routes import auth, bots, trading, positions, trades, websocket
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+
+# Suppress noisy uvicorn logs
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

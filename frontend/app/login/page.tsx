@@ -30,7 +30,12 @@ export default function LoginPage() {
       setUser({ username, token: access_token });
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Authentication failed');
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(detail.map((e: any) => e.msg).join(', '));
+      } else {
+        setError(detail || 'Authentication failed');
+      }
     } finally {
       setLoading(false);
     }

@@ -11,20 +11,7 @@ class Bot(Base):
     symbol = Column(String, nullable=False, index=True)  # e.g. BTCUSDT
     side = Column(String, nullable=False)  # LONG or SHORT
 
-    # Strategy configuration
     config = Column(JSON, nullable=False)
-    # Example:
-    # {
-    #   "order_count": 4,
-    #   "entry_size": 0.25,
-    #   "step_percent": 4,
-    #   "leverage": 10,
-    #   "pyramiding_multiplier": 1.5,
-    #   "sl_initial": 5,
-    #   "sl_dynamic_offset": 2,
-    #   "use_trailing": true,
-    #   "trailing_percent": 1.5
-    # }
 
     # State
     state = Column(String, default="IDLE")  # IDLE, ENTRY, PYRAMIDING, EXIT

@@ -123,9 +123,13 @@ class PriceStreamManager:
 
         self.active_symbols.add(symbol)
 
-        # Subscribe to Bybit WebSocket
+        # Получаем loop главного потока, чтобы передать его в колбэк pybit
+        loop = asyncio.get_event_loop()
+
         def on_message(message):
-            asyncio.create_task(self._handle_price_update(symbol, message))
+            asyncio.run_coroutine_threadsafe(
+                self._handle_price_update(symbol, message), loop
+            )
 
         ws = bybit_client.init_websocket(on_message)
         bybit_client.subscribe_ticker(symbol, on_message)
@@ -140,17 +144,12 @@ class PriceStreamManager:
                 price = float(data.get("lastPrice", 0))
 
                 if price > 0:
-                    # Save to Redis
                     await set_live_price(symbol, price)
-
-                    # Broadcast to WebSocket clients
                     await manager.broadcast_price_update(symbol, price)
-
-                    # Update active strategy engines
                     await self._update_strategies(symbol, price)
 
         except Exception as e:
-            logger.error(f"Error handling price update: {e}")
+            logger.error(f"[WS] Ошибка обработки цены {symbol}: {e}", exc_info=True)
 
     async def _update_strategies(self, symbol: str, price: float):
         """Update all active strategies for this symbol"""

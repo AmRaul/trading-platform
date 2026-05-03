@@ -38,7 +38,7 @@ class StrategyConfig(BaseModel):
     )
     pyramiding_multiplier: float = Field(
         default=1.5,
-        gt=1.0,
+        ge=1.0,
         le=3.0,
         description="Order size multiplier (1-3x)"
     )
@@ -48,11 +48,15 @@ class StrategyConfig(BaseModel):
         le=50,
         description="Initial stop-loss in % (0-50%)"
     )
-    sl_dynamic_offset: float = Field(
+    sl_after_order3: float = Field(
         default=2.0,
         gt=0,
         le=50,
-        description="Dynamic SL offset in % (0-50%)"
+        description="SL offset in profit after order 3 in % (0-50%)"
+    )
+    sl_breakeven_on_order2: bool = Field(
+        default=True,
+        description="Move SL to breakeven after order 2"
     )
     use_trailing: bool = Field(
         default=True,
@@ -64,11 +68,17 @@ class StrategyConfig(BaseModel):
         le=20,
         description="Trailing stop distance in % (0-20%)"
     )
-    take_profit: Optional[float] = Field(
-        default=None,
+    sl_breakeven_plus: float = Field(
+        default=0.5,
+        ge=0,
+        le=10,
+        description="SL offset in profit after order 3+ in %"
+    )
+    tp_percent: float = Field(
+        default=3.0,
         gt=0,
         le=100,
-        description="Take profit target in % (optional)"
+        description="Take profit in %"
     )
 
     @validator('entry_size_usdt')
@@ -89,9 +99,6 @@ class StrategyConfig(BaseModel):
 
     @validator('pyramiding_multiplier')
     def validate_multiplier(cls, v):
-        """Ensure multiplier is reasonable"""
-        if v < 1.1:
-            raise ValueError('Multiplier too small (min 1.1) - position won\'t grow')
         if v > 2.5:
             logger.warning(f'High multiplier: {v} - final orders will be very large')
         return v
@@ -130,12 +137,26 @@ class StrategyConfig(BaseModel):
                 "leverage": 10,
                 "pyramiding_multiplier": 1.5,
                 "sl_initial": 5,
-                "sl_dynamic_offset": 2,
+                "sl_after_order3": 2,
+                "sl_breakeven_plus": 0.5,
                 "use_trailing": True,
                 "trailing_percent": 1.5,
-                "take_profit": None
+                "tp_percent": 3.0
             }
         }
+
+
+class OpenPositionData(BaseModel):
+    average_price: Optional[float] = None
+    current_sl: Optional[float] = None
+    total_size: float
+    order_count: int
+    unrealized_pnl: float
+    last_order_price: Optional[float] = None
+    opened_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class BotCreate(BaseModel):
@@ -187,6 +208,7 @@ class BotResponse(BaseModel):
     total_pnl: float
     created_at: datetime
     started_at: Optional[datetime]
+    open_position: Optional[OpenPositionData] = None
 
     class Config:
         from_attributes = True

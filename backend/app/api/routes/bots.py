@@ -3,10 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List
 from app.core.database import get_db
-from app.models import User, Bot, Position
-from app.schemas.bot import BotCreate, BotUpdate, BotResponse
+from app.models import User, Bot, Position, Order, Trade
+from app.schemas.bot import BotCreate, BotUpdate, BotResponse, OpenPositionData
 from app.api.deps import get_current_user
 from app.services.cryptorg import cryptorg_client
+from app.core.redis import get_position_state
 
 router = APIRouter()
 
@@ -19,7 +20,72 @@ async def get_bots(
     """Get all bots"""
     result = await db.execute(select(Bot).order_by(Bot.created_at.desc()))
     bots = result.scalars().all()
-    return bots
+
+    # Fetch open positions for active bots
+    active_bot_ids = [b.id for b in bots if b.state != "IDLE"]
+    positions_by_bot = {}
+    if active_bot_ids:
+        pos_result = await db.execute(
+            select(Position).where(
+                and_(
+                    Position.bot_id.in_(active_bot_ids),
+                    Position.is_open == True
+                )
+            )
+        )
+        for pos in pos_result.scalars().all():
+            positions_by_bot[pos.bot_id] = pos
+
+    # Get last_order_price per bot (Redis first, then DB fallback)
+    last_order_prices = {}
+    for bot_id, pos in positions_by_bot.items():
+        redis_state = await get_position_state(str(bot_id))
+        if redis_state and redis_state.get("last_order_price"):
+            last_order_prices[bot_id] = redis_state["last_order_price"]
+        else:
+            order_result = await db.execute(
+                select(Order.price)
+                .where(
+                    and_(
+                        Order.position_id == pos.id,
+                        Order.status == "FILLED"
+                    )
+                )
+                .order_by(Order.order_number.desc())
+                .limit(1)
+            )
+            last_order_prices[bot_id] = order_result.scalar_one_or_none()
+
+    # Assemble response with open_position
+    response = []
+    for bot in bots:
+        pos = positions_by_bot.get(bot.id)
+        open_position = None
+        if pos:
+            open_position = OpenPositionData(
+                average_price=pos.average_price,
+                current_sl=pos.current_sl,
+                total_size=pos.total_size,
+                order_count=pos.order_count,
+                unrealized_pnl=pos.unrealized_pnl or 0.0,
+                last_order_price=last_order_prices.get(bot.id),
+                opened_at=pos.opened_at,
+            )
+        response.append(BotResponse(
+            id=bot.id,
+            name=bot.name,
+            symbol=bot.symbol,
+            side=bot.side,
+            config=bot.config,
+            state=bot.state,
+            is_active=bot.is_active,
+            total_pnl=bot.total_pnl,
+            created_at=bot.created_at,
+            started_at=bot.started_at,
+            open_position=open_position,
+        ))
+
+    return response
 
 
 @router.get("/cryptorg")
@@ -119,19 +185,21 @@ async def delete_bot(
     if not bot:
         raise HTTPException(status_code=404, detail="Bot not found")
 
-    # Check if bot has open positions
-    result = await db.execute(
-        select(Position).where(
-            and_(Position.bot_id == bot_id, Position.is_open == True)
-        )
-    )
-    open_position = result.scalar_one_or_none()
+    # Delete child records in order: orders → trades → positions → bot
+    orders = await db.execute(select(Order).where(Order.bot_id == bot_id))
+    for order in orders.scalars().all():
+        await db.delete(order)
+    await db.flush()
 
-    if open_position:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete bot with open position"
-        )
+    trades = await db.execute(select(Trade).where(Trade.bot_id == bot_id))
+    for trade in trades.scalars().all():
+        await db.delete(trade)
+    await db.flush()
+
+    positions = await db.execute(select(Position).where(Position.bot_id == bot_id))
+    for position in positions.scalars().all():
+        await db.delete(position)
+    await db.flush()
 
     await db.delete(bot)
     await db.commit()

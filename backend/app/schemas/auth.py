@@ -75,10 +75,6 @@ class UserCreate(BaseModel):
         if not re.search(r'\d', v):
             raise ValueError('Password must contain at least one digit')
 
-        # Must contain special character
-        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
-            raise ValueError('Password must contain at least one special character (!@#$%^&*...)')
-
         # Check for common weak patterns
         weak_patterns = [
             r'password',
