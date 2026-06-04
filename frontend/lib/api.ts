@@ -66,3 +66,19 @@ export const tradesApi = {
 
   getByBot: (bot_id: number) => api.get(`/api/trades/bot/${bot_id}`),
 };
+
+// Screener API
+export const screenerApi = {
+  getLatest: () => api.get('/api/screener/latest'),
+  triggerScan: () => api.post('/api/screener/scan'),
+};
+
+// Signals API
+export const signalsApi = {
+  getAll: (limit = 100) => api.get('/api/signals/', { params: { limit } }),
+};
+
+// Trend Signals API
+export const trendSignalsApi = {
+  getAll: (limit = 200) => api.get('/api/trend-signals/', { params: { limit } }),
+};

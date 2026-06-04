@@ -128,8 +128,8 @@ class StrategyConfig(BaseModel):
             logger.warning(f'Wide trailing: {v}% - might give back too much profit')
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "order_count": 4,
                 "entry_size_usdt": 100,
@@ -144,6 +144,7 @@ class StrategyConfig(BaseModel):
                 "tp_percent": 3.0
             }
         }
+    }
 
 
 class OpenPositionData(BaseModel):

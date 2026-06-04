@@ -48,6 +48,24 @@ export default function Navbar() {
               >
                 History
               </Link>
+              <Link
+                href="/screener"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Screener
+              </Link>
+              <Link
+                href="/signals"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Signals
+              </Link>
+              <Link
+                href="/trend-signals"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Trend
+              </Link>
             </div>
           </div>
 
