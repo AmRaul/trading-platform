@@ -29,13 +29,13 @@ export const authApi = {
 
 // Bots API
 export const botsApi = {
-  getAll: () => api.get('/api/bots'),
+  getAll: () => api.get('/api/bots/'),
 
   getCryptorg: () => api.get('/api/bots/cryptorg'),
 
   getOne: (id: number) => api.get(`/api/bots/${id}`),
 
-  create: (data: any) => api.post('/api/bots', data),
+  create: (data: any) => api.post('/api/bots/', data),
 
   update: (id: number, data: any) => api.patch(`/api/bots/${id}`, data),
 
@@ -54,7 +54,7 @@ export const tradingApi = {
 // Positions API
 export const positionsApi = {
   getAll: (is_open?: boolean) =>
-    api.get('/api/positions', { params: { is_open } }),
+    api.get('/api/positions/', { params: { is_open } }),
 
   getByBot: (bot_id: number) =>
     api.get(`/api/positions/bot/${bot_id}`),
