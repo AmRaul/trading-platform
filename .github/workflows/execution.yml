@@ -73,16 +73,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Copy config files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.HOST }}
-          username: ${{ secrets.USER }}
-          key: ${{ secrets.SSH_KEY }}
-          source: "docker-compose.yml,backend/alembic/,backend/entrypoint.sh"
-          target: "/opt/trading-platform/execution/"
-          strip_components: 0
-
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -90,22 +80,25 @@ jobs:
           username: ${{ secrets.USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            cd /opt/trading-platform/execution
+            cd /opt/trading-platform
 
             REPO_LOWERCASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             # Создаём .env из secrets
-            cat > .env << EOF
-            DATABASE_URL=${{ secrets.EXECUTION_DATABASE_URL }}
-            REDIS_URL=${{ secrets.REDIS_URL }}
-            SECRET_KEY=${{ secrets.SECRET_KEY }}
-            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
-            BYBIT_TESTNET=false
-            CRYPTORG_BASE_URL=https://api2.cryptorg.net
-            BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]
-            NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}
-            NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}
-            EOF
+            cat > .env << 'ENVEOF'
+POSTGRES_USER=${{ secrets.DB_USER }}
+POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
+POSTGRES_DB=trading_db
+DATABASE_URL=${{ secrets.EXECUTION_DATABASE_URL }}
+REDIS_URL=${{ secrets.REDIS_URL }}
+SECRET_KEY=${{ secrets.SECRET_KEY }}
+ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+BYBIT_TESTNET=false
+CRYPTORG_BASE_URL=https://api2.cryptorg.net
+BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]
+NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}
+NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}
+ENVEOF
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
