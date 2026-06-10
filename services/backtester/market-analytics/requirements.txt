@@ -1,0 +1,48 @@
+# FastAPI и сервер
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+alembic>=1.12.0
+
+# Redis caching
+redis>=5.0.0
+
+# HTTP клиенты
+aiohttp>=3.9.0
+requests>=2.31.0
+httpx>=0.26.0
+
+# Crypto data sources
+ccxt>=4.2.0
+pycoingecko>=3.1.0
+
+# Market data
+yfinance>=0.2.35
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Scheduler
+apscheduler>=3.10.4
+
+# Telegram Bot
+aiogram>=3.3.0
+python-telegram-bot>=20.0  # For sync notifications in optimizer
+
+# Database for bot subscribers
+psycopg2-binary>=2.9.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-dateutil>=2.8.2
+
+# Logging
+structlog>=24.1.0
+
+# Testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.23.0

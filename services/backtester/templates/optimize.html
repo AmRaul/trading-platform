@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Strategy Optimization - Crypto Backtester{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+    <div class="row">
+        <div class="col-12">
+            <h1 class="mb-4">
+                <i class="fas fa-sliders-h text-primary"></i> Strategy Optimization
+            </h1>
+            <p class="text-muted mb-4">
+                Use Bayesian Optimization (Optuna) to find optimal strategy parameters automatically.
+                <span class="badge bg-warning">Admin Only</span>
+            </p>
+        </div>
+    </div>
+
+    <!-- Queue Status -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <i class="fas fa-list"></i> Optimization Queue Status
+                </div>
+                <div class="card-body">
+                    <div class="row text-center" id="queueStats">
+                        <div class="col-md-4">
+                            <h4 id="queueLength">-</h4>
+                            <small class="text-muted">In Queue</small>
+                        </div>
+                        <div class="col-md-4">
+                            <h4 id="runningCount">-</h4>
+                            <small class="text-muted">Running</small>
+                        </div>
+                        <div class="col-md-4">
+                            <h4 id="completedCount">-</h4>
+                            <small class="text-muted">Completed</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Optimization Form -->
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-cog"></i> Optimization Configuration
+                </div>
+                <div class="card-body">
+                    <form id="optimizationForm">
+                        <!-- User ID (for auth) -->
+                        <div class="mb-3">
+                            <label for="userId" class="form-label">Telegram User ID <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="userId" value="297936848" required placeholder="Your Telegram user ID">
+                            <small class="form-text text-muted">Required for access control and notifications</small>
+                        </div>
+
+                        <!-- Data Source Selection -->
+                        <h5 class="mt-4 mb-3">Data Source</h5>
+                        {% include '_data_source_selector.html' %}
+
+                        <!-- Trials -->
+                        <div class="mb-3">
+                            <label for="nTrials" class="form-label">Number of Trials</label>
+                            <input type="number" class="form-control" id="nTrials" value="100" min="10" max="500">
+                            <small class="form-text text-muted">More trials = better optimization but longer time</small>
+                        </div>
+
+                        <!-- Entry Type Selection -->
+                        <h5 class="mt-4 mb-3">Entry Type</h5>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="entryType" id="entryTypeImmediate" value="immediate" checked>
+                                <label class="form-check-label" for="entryTypeImmediate">
+                                    <strong>Immediate Entry</strong> - Enter positions immediately without indicators
+                                </label>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="radio" name="entryType" id="entryTypeRSI" value="rsi">
+                                <label class="form-check-label" for="entryTypeRSI">
+                                    <strong>RSI Indicator Entry</strong> - Enter when RSI is oversold
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Parameters to Optimize -->
+                        <h5 class="mt-4 mb-3">Parameters to Optimize</h5>
+
+                        <div class="mb-3" id="rsiLevelsContainer" style="display: none;">
+                            <label class="form-label">RSI Oversold Levels</label>
+                            <input type="text" class="form-control" id="rsiLevels" value="20,25,30,35,40" placeholder="Comma-separated values">
+                            <small class="form-text text-muted">Only active when RSI Entry is selected</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Take Profit % Range</label>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <input type="number" class="form-control" id="tpMin" value="1.0" step="0.5" placeholder="Min">
+                                </div>
+                                <div class="col-md-6">
+                                    <input type="number" class="form-control" id="tpMax" value="5.0" step="0.5" placeholder="Max">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">DCA Max Orders</label>
+                            <input type="text" class="form-control" id="dcaMaxOrders" value="3,5,7,10" placeholder="Comma-separated values">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">DCA Step %</label>
+                            <input type="text" class="form-control" id="dcaSteps" value="1.0,1.5,2.0,2.5,3.0" placeholder="Comma-separated values">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">First Order % of Balance</label>
+                            <input type="text" class="form-control" id="firstOrderPercent" value="5,10,15,20" placeholder="Comma-separated values">
+                        </div>
+
+                        <!-- Submit -->
+                        <div class="d-grid gap-2 mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg" id="startBtn">
+                                <i class="fas fa-play"></i> Start Optimization
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Optimizations -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-history"></i> Recent Optimizations
+                </div>
+                <div class="card-body" id="recentOptimizations">
+                    <p class="text-muted">Loading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Toggle RSI fields based on entry type
+document.querySelectorAll('input[name="entryType"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        const rsiContainer = document.getElementById('rsiLevelsContainer');
+        if (e.target.value === 'rsi') {
+            rsiContainer.style.display = 'block';
+        } else {
+            rsiContainer.style.display = 'none';
+        }
+    });
+});
+
+// Data source JavaScript is now in _data_source_selector.html partial
+
+// Load queue status
+function loadQueueStatus() {
+    fetch('/api/optimize/queue')
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('queueLength').textContent = data.queue_length || 0;
+            document.getElementById('runningCount').textContent = data.running_count || 0;
+            document.getElementById('completedCount').textContent = data.completed_count || 0;
+        })
+        .catch(err => console.error('Error loading queue status:', err));
+}
+
+// Load recent optimizations
+function loadRecentOptimizations() {
+    fetch('/api/optimize/history?limit=10')
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById('recentOptimizations');
+
+            // Check for error response
+            if (data.error) {
+                container.innerHTML = `<p class="text-danger">Error: ${data.error}</p>`;
+                return;
+            }
+
+            // Check if response is array
+            if (!Array.isArray(data)) {
+                container.innerHTML = '<p class="text-warning">Invalid response format</p>';
+                console.error('Expected array, got:', data);
+                return;
+            }
+
+            if (data.length === 0) {
+                container.innerHTML = '<p class="text-muted">No optimizations yet</p>';
+                return;
+            }
+
+            let html = '<div class="list-group">';
+            data.forEach(opt => {
+                const statusBadge = opt.status === 'completed' ? 'success' : opt.status === 'failed' ? 'danger' : 'warning';
+                html += `
+                    <a href="/optimization-results/${opt.task_id}" class="list-group-item list-group-item-action">
+                        <div class="d-flex justify-content-between">
+                            <strong>${opt.symbol || 'Unknown'}</strong>
+                            <span class="badge bg-${statusBadge}">${opt.status}</span>
+                        </div>
+                        <small class="text-muted">${new Date(opt.created_at).toLocaleString()}</small>
+                    </a>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            console.error('Error loading history:', err);
+            document.getElementById('recentOptimizations').innerHTML = '<p class="text-danger">Error loading history</p>';
+        });
+}
+
+// Submit form
+document.getElementById('optimizationForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const userId = document.getElementById('userId').value;
+    const nTrials = parseInt(document.getElementById('nTrials').value);
+    const entryType = document.querySelector('input[name="entryType"]:checked').value;
+    const dataSource = document.querySelector('input[name="dataSource"]:checked').value;
+
+    // Parse parameters
+    const tpMin = parseFloat(document.getElementById('tpMin').value);
+    const tpMax = parseFloat(document.getElementById('tpMax').value);
+    const dcaMaxOrders = document.getElementById('dcaMaxOrders').value.split(',').map(v => parseInt(v.trim()));
+    const dcaSteps = document.getElementById('dcaSteps').value.split(',').map(v => parseFloat(v.trim()));
+    const firstOrderPercent = document.getElementById('firstOrderPercent').value.split(',').map(v => parseFloat(v.trim()));
+
+    // Configure data source
+    let dataSourceConfig = {};
+    let symbol = '';
+    let timeframe = '15m';
+
+    if (dataSource === 'csv') {
+        const csvFilePath = document.getElementById('csvFile').value;
+        if (!csvFilePath) {
+            alert('Please select a CSV file');
+            return;
+        }
+        // Extract symbol from CSV filename (e.g., BTCUSDT_1h_binance_spot.csv -> BTCUSDT)
+        const fileName = csvFilePath.split('/').pop();
+        symbol = fileName.split('_')[0];
+
+        dataSourceConfig = {
+            type: 'csv',
+            file: csvFilePath
+        };
+    } else {
+        const exchange = document.getElementById('exchange').value;
+        symbol = document.getElementById('apiSymbol').value; // Using apiSymbol from partial
+        timeframe = document.getElementById('timeframe').value;
+        const marketType = document.getElementById('marketType').value;
+
+        dataSourceConfig = {
+            type: 'api',
+            api: {
+                exchange: exchange,
+                symbol: symbol,
+                market_type: marketType
+            }
+        };
+    }
+
+    // Base config
+    const baseConfig = {
+        symbol: symbol,
+        timeframe: timeframe,
+        start_balance: 10000,
+        leverage: 1,
+        order_type: 'long',
+        data_source: dataSourceConfig,
+        first_order: {
+            type: 'percent',
+            percent_of_balance: 10
+        },
+        dca: {
+            enabled: true,
+            max_orders: 5,
+            step_percent: 2.0,
+            progression_type: 'exponential',
+            multiplier: 1.5
+        },
+        take_profit: {
+            enabled: true,
+            target_percent: 3.0
+        },
+        risk_management: {
+            max_drawdown_percent: 50,
+            max_open_positions: 1
+        }
+    };
+
+    // Optimization params (common for both types)
+    const optimizationParams = {
+        'take_profit.target_percent': { min: tpMin, max: tpMax, step: 0.5 },
+        'dca.max_orders': dcaMaxOrders,
+        'dca.step_percent': dcaSteps,
+        'first_order.percent_of_balance': firstOrderPercent
+    };
+
+    // Configure entry conditions based on selected type
+    if (entryType === 'rsi') {
+        const rsiLevels = document.getElementById('rsiLevels').value.split(',').map(v => parseFloat(v.trim()));
+        baseConfig.entry_conditions = {
+            trigger_type: 'indicator',
+            rsi_oversold: 30
+        };
+        optimizationParams['entry_conditions.rsi_oversold'] = rsiLevels;
+    } else {
+        baseConfig.entry_conditions = {
+            trigger_type: 'immediate'
+        };
+    }
+
+    const payload = {
+        base_config: baseConfig,
+        optimization_params: optimizationParams,
+        n_trials: nTrials
+    };
+
+    const startBtn = document.getElementById('startBtn');
+    startBtn.disabled = true;
+    startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Starting...';
+
+    try {
+        const response = await fetch('/api/optimize/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-ID': userId
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            alert(`✅ Optimization started!\nTask ID: ${result.task_id}\n\nCheck progress in "Recent Optimizations" section.\nYou will receive Telegram notifications about progress.`);
+            // Refresh the recent optimizations list
+            loadRecentOptimizations();
+            loadQueueStatus();
+        } else {
+            alert(`❌ Error: ${result.error}`);
+        }
+    } catch (err) {
+        alert(`❌ Error: ${err.message}`);
+    } finally {
+        startBtn.disabled = false;
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Start Optimization';
+    }
+});
+
+// Auto-refresh
+setInterval(() => {
+    loadQueueStatus();
+    loadRecentOptimizations();
+}, 5000);
+
+// Initial load
+loadQueueStatus();
+loadRecentOptimizations();
+</script>
+{% endblock %}

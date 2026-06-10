@@ -1,0 +1,698 @@
+{% extends "base.html" %}
+
+{% block title %}Результаты бэктеста {{ task_id[:8] }} - Crypto Backtester{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <!-- Заголовок -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                        <div>
+                            <h4 class="mb-1">
+                                <i class="fas fa-chart-line me-2 text-primary"></i>
+                                Результаты бэктеста
+                            </h4>
+                            <span class="badge bg-secondary">ID: {{ task_id[:8] }}...</span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <a href="{{ url_for('visualization_page', task_id=task_id) }}" class="btn btn-success">
+                                <i class="fas fa-chart-line me-1"></i>Интерактивная визуализация
+                            </a>
+                            <a href="{{ url_for('results_page') }}" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left me-1"></i>Назад к списку
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- Основные метрики -->
+<div class="row">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-primary">
+                    {{ "%.2f"|format(results.get('basic_stats', {}).get('total_return') | default(0, true)) }}%
+                </h5>
+                <p class="card-text small">Общая доходность</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-success">
+                    {{ "%.2f"|format(results.get('basic_stats', {}).get('win_rate') | default(0, true)) }}%
+                </h5>
+                <p class="card-text small">Винрейт</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-info">
+                    {{ results.get('basic_stats', {}).get('total_trades', 0) }}
+                </h5>
+                <p class="card-text small">Всего сделок</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-warning">
+                    {{ "%.2f"|format(results.get('advanced_metrics', {}).get('max_drawdown_percent') | default(0, true)) }}%
+                </h5>
+                <p class="card-text small">Макс. просадка</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Графики -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-chart-area me-2"></i>
+                    Графики
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% if charts.equity_curve %}
+                    <div class="col-md-6 mb-4">
+                        <h6>Кривая эквити</h6>
+                        <img src="data:image/png;base64,{{ charts.equity_curve }}" class="img-fluid" alt="Кривая эквити">
+                    </div>
+                    {% endif %}
+                    
+                    {% if charts.pnl_distribution %}
+                    <div class="col-md-6 mb-4">
+                        <h6>Распределение PnL</h6>
+                        <img src="data:image/png;base64,{{ charts.pnl_distribution }}" class="img-fluid" alt="Распределение PnL">
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Настройки стратегии -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-cog me-2"></i>
+                    Настройки стратегии
+                </h6>
+            </div>
+            <div class="card-body">
+                {% set config = results.get('config', {}) %}
+                <div class="row">
+                    <div class="col-md-3">
+                        <h6 class="text-muted mb-3">Основные параметры</h6>
+                        <table class="table table-sm">
+                            <tr>
+                                <td>Символ:</td>
+                                <td class="text-end"><strong>{{ config.get('symbol', 'N/A') }}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Тип позиции:</td>
+                                <td class="text-end">
+                                    <span class="badge {% if config.get('order_type') == 'long' %}bg-success{% else %}bg-danger{% endif %}">
+                                        {{ config.get('order_type', 'N/A')|upper }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>Начальный баланс:</td>
+                                <td class="text-end">${{ "%.2f"|format(config.get('start_balance') | default(0, true)) }}</td>
+                            </tr>
+                            <tr>
+                                <td>Плечо:</td>
+                                <td class="text-end">{{ config.get('leverage', 1) }}x</td>
+                            </tr>
+                            <tr>
+                                <td>Комиссия:</td>
+                                <td class="text-end">{{ "%.2f"|format(config.get('fee_percent') | default(0.04, true)) }}%</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="col-md-3">
+                        <h6 class="text-muted mb-3">Первый ордер</h6>
+                        <table class="table table-sm">
+                            {% set first_order = config.get('first_order', {}) %}
+                            <tr>
+                                <td>Размер:</td>
+                                <td class="text-end">
+                                    {% if first_order.get('percent') %}
+                                        {{ first_order.get('percent') }}% баланса
+                                    {% elif first_order.get('amount') %}
+                                        ${{ first_order.get('amount') }}
+                                    {% elif first_order.get('risk_percent') %}
+                                        {{ first_order.get('risk_percent') }}% риск
+                                    {% else %}
+                                        N/A
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        </table>
+
+                        <h6 class="text-muted mb-3 mt-3">DCA настройки</h6>
+                        <table class="table table-sm">
+                            {% set dca = config.get('dca', {}) %}
+                            <tr>
+                                <td>Включен:</td>
+                                <td class="text-end">
+                                    <span class="badge {% if dca.get('enabled') %}bg-success{% else %}bg-secondary{% endif %}">
+                                        {{ 'Да' if dca.get('enabled') else 'Нет' }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% if dca.get('enabled') %}
+                            <tr>
+                                <td>Макс. ордеров:</td>
+                                <td class="text-end">{{ dca.get('max_orders', 0) }}</td>
+                            </tr>
+                            <tr>
+                                <td>Отклонение:</td>
+                                <td class="text-end">{{ dca.get('price_deviation_percent', 0) }}%</td>
+                            </tr>
+                            <tr>
+                                <td>Мартингейл:</td>
+                                <td class="text-end">{{ dca.get('volume_multiplier', 1) }}x</td>
+                            </tr>
+                            {% endif %}
+                        </table>
+                    </div>
+
+                    <div class="col-md-3">
+                        <h6 class="text-muted mb-3">Тейк профит</h6>
+                        <table class="table table-sm">
+                            {% set tp = config.get('take_profit', {}) %}
+                            <tr>
+                                <td>Включен:</td>
+                                <td class="text-end">
+                                    <span class="badge {% if tp.get('enabled') %}bg-success{% else %}bg-secondary{% endif %}">
+                                        {{ 'Да' if tp.get('enabled') else 'Нет' }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% if tp.get('enabled') %}
+                            <tr>
+                                <td>Процент:</td>
+                                <td class="text-end">{{ tp.get('percent', 0) }}%</td>
+                            </tr>
+                            {% if tp.get('trailing', {}).get('enabled') %}
+                            <tr>
+                                <td>Трейлинг:</td>
+                                <td class="text-end">{{ tp.get('trailing', {}).get('trail_percent', 0) }}%</td>
+                            </tr>
+                            {% endif %}
+                            {% endif %}
+                        </table>
+
+                        <h6 class="text-muted mb-3 mt-3">Стоп лосс</h6>
+                        <table class="table table-sm">
+                            {% set sl = config.get('stop_loss', {}) %}
+                            <tr>
+                                <td>Включен:</td>
+                                <td class="text-end">
+                                    <span class="badge {% if sl.get('enabled') %}bg-danger{% else %}bg-secondary{% endif %}">
+                                        {{ 'Да' if sl.get('enabled') else 'Нет' }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% if sl.get('enabled') %}
+                            <tr>
+                                <td>Процент:</td>
+                                <td class="text-end">{{ sl.get('percent', 0) }}%</td>
+                            </tr>
+                            {% if sl.get('trailing', {}).get('enabled') %}
+                            <tr>
+                                <td>Трейлинг:</td>
+                                <td class="text-end">{{ sl.get('trailing', {}).get('trail_percent', 0) }}%</td>
+                            </tr>
+                            {% endif %}
+                            {% endif %}
+                        </table>
+                    </div>
+
+                    <div class="col-md-3">
+                        <h6 class="text-muted mb-3">Источник данных</h6>
+                        <table class="table table-sm">
+                            {% set data_source = config.get('data_source', {}) %}
+                            <tr>
+                                <td>Тип:</td>
+                                <td class="text-end">
+                                    <span class="badge bg-info">{{ data_source.get('type', 'N/A')|upper }}</span>
+                                </td>
+                            </tr>
+                            {% if data_source.get('type') == 'csv' %}
+                            <tr>
+                                <td>Файл:</td>
+                                <td class="text-end"><small>{{ data_source.get('file', 'N/A') }}</small></td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td>Биржа:</td>
+                                <td class="text-end">{{ data_source.get('exchange', 'N/A') }}</td>
+                            </tr>
+                            <tr>
+                                <td>Таймфрейм:</td>
+                                <td class="text-end">{{ data_source.get('timeframe', 'N/A') }}</td>
+                            </tr>
+                            {% endif %}
+                        </table>
+
+                        {% if config.get('indicators', {}).get('selected_indicators') %}
+                        <h6 class="text-muted mb-3 mt-3">Индикаторы</h6>
+                        <table class="table table-sm">
+                            {% for indicator, is_selected in config.get('indicators', {}).get('selected_indicators', {}).items() %}
+                                {% if is_selected %}
+                                <tr>
+                                    <td>{{ indicator|upper|replace('_', ' ') }}:</td>
+                                    <td class="text-end"><span class="badge bg-primary">✓</span></td>
+                                </tr>
+                                {% endif %}
+                            {% endfor %}
+                        </table>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <button class="btn btn-sm btn-outline-primary" onclick="toggleFullConfig()">
+                            <i class="fas fa-code me-1"></i>Показать полную конфигурацию (JSON)
+                        </button>
+                        <div id="fullConfigSection" style="display: none;" class="mt-3">
+                            <pre class="bg-light p-3 rounded"><code>{{ config | tojson(indent=2) }}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Детальная статистика -->
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-chart-pie me-2"></i>
+                    Основные метрики
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if results.get('basic_stats') %}
+                <table class="table table-sm">
+                    <tr>
+                        <td>Начальный баланс:</td>
+                        <td class="text-end">${{ "%.2f"|format(results.get('config', {}).get('start_balance') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Финальный баланс:</td>
+                        <td class="text-end">${{ "%.2f"|format(results.basic_stats.get('current_balance') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Общая прибыль:</td>
+                        <td class="text-end">${{ "%.2f"|format(results.basic_stats.get('total_pnl') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Средняя прибыль:</td>
+                        <td class="text-end">${{ "%.2f"|format(results.basic_stats.get('average_profit') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Средний убыток:</td>
+                        <td class="text-end">${{ "%.2f"|format(results.basic_stats.get('average_loss') | default(0, true)) }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-shield-alt me-2"></i>
+                    Риск-метрики
+                </h6>
+            </div>
+            <div class="card-body">
+                {% if results.get('advanced_metrics') %}
+                <table class="table table-sm">
+                    <tr>
+                        <td>Sharpe Ratio:</td>
+                        <td class="text-end">{{ "%.2f"|format(results.advanced_metrics.get('sharpe_ratio') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Profit Factor:</td>
+                        <td class="text-end">{{ "%.2f"|format(results.advanced_metrics.get('profit_factor') | default(0, true)) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Max Drawdown:</td>
+                        <td class="text-end">{{ "%.2f"|format(results.advanced_metrics.get('max_drawdown_percent') | default(0, true)) }}%</td>
+                    </tr>
+                    <tr>
+                        <td>Avg Trade Duration:</td>
+                        <td class="text-end">{{ "%.1f"|format(results.advanced_metrics.get('avg_trade_duration_hours') | default(0, true)) }}h</td>
+                    </tr>
+                    <tr>
+                        <td>Max Consecutive Wins:</td>
+                        <td class="text-end">{{ results.advanced_metrics.get('max_consecutive_wins', 0) }}</td>
+                    </tr>
+                    <tr>
+                        <td>Max Consecutive Losses:</td>
+                        <td class="text-end">{{ results.advanced_metrics.get('max_consecutive_losses', 0) }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- История сделок -->
+{% if results.get('trade_history') %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-list me-2"></i>
+                    История сделок (всего: {{ results.trade_history|length }})
+                </h6>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary" onclick="showAllTrades()">
+                        <i class="fas fa-expand me-1"></i>Показать все
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="exportTradesToCsv()">
+                        <i class="fas fa-file-csv me-1"></i>Экспорт CSV
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover" id="tradesTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Тип</th>
+                                <th>Цена входа</th>
+                                <th>Цена выхода</th>
+                                <th>Объем</th>
+                                <th>PnL</th>
+                                <th>PnL %</th>
+                                <th>Дата</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tradesTableBody">
+                            {% for trade in results.trade_history[:50] %}
+                            {% set trade_type = trade.get('type') if trade is mapping else trade.type %}
+                            {% set entry_price = trade.get('entry_price', 0) if trade is mapping else trade.entry_price %}
+                            {% set exit_price = trade.get('exit_price', 0) if trade is mapping else trade.exit_price %}
+                            {% set volume = trade.get('volume', 0) if trade is mapping else trade.volume %}
+                            {% set pnl = trade.get('pnl', 0) if trade is mapping else trade.pnl %}
+                            {% set pnl_percent = trade.get('pnl_percent', 0) if trade is mapping else trade.pnl_percent %}
+                            {% set entry_time = trade.get('entry_time') if trade is mapping else trade.entry_time %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>
+                                    {% if trade_type == 'long' %}
+                                        <span class="badge bg-success">Long</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">Short</span>
+                                    {% endif %}
+                                </td>
+                                <td>${{ "%.2f"|format(entry_price | default(0, true)) }}</td>
+                                <td>${{ "%.2f"|format(exit_price | default(0, true)) }}</td>
+                                <td>{{ "%.4f"|format(volume | default(0, true)) }}</td>
+                                <td class="{% if pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    ${{ "%.2f"|format(pnl | default(0, true)) }}
+                                </td>
+                                <td class="{% if pnl >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                    {{ "%.2f"|format(pnl_percent | default(0, true)) }}%
+                                </td>
+                                <td>
+                                    <small>{{ entry_time if entry_time and entry_time is string else '-' }}</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if results.trade_history|length > 50 %}
+                <div class="text-center mt-3" id="loadMoreSection">
+                    <button class="btn btn-primary" onclick="loadMoreTrades()">
+                        <i class="fas fa-plus me-1"></i>Загрузить ещё 50 сделок
+                    </button>
+                    <div class="mt-2">
+                        <small class="text-muted">Показано <span id="shownTrades">50</span> из {{ results.trade_history|length }}</small>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Скрываем все сделки в JSON для JavaScript -->
+<script type="application/json" id="allTradesData">
+{{ results.trade_history | tojson | safe }}
+</script>
+{% endif %}
+
+<!-- Действия -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-download me-2"></i>
+                    Экспорт результатов
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-2">
+                        <button class="btn btn-outline-primary w-100" onclick="viewFullReport()">
+                            <i class="fas fa-eye me-2"></i>Полный отчет
+                        </button>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{{ url_for('download_csv', task_id=task_id) }}" class="btn btn-outline-success w-100">
+                            <i class="fas fa-file-csv me-2"></i>CSV сделки
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <a href="{{ url_for('download_json', task_id=task_id) }}" class="btn btn-outline-info w-100">
+                            <i class="fas fa-file-code me-2"></i>JSON данные
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-2">
+                        <button class="btn btn-outline-warning w-100" onclick="shareResults()">
+                            <i class="fas fa-share me-2"></i>Поделиться
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Данные всех сделок
+let allTrades = [];
+let currentTradeIndex = 50;
+
+// Загружаем все сделки при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    const tradesDataElement = document.getElementById('allTradesData');
+    if (tradesDataElement) {
+        try {
+            allTrades = JSON.parse(tradesDataElement.textContent);
+        } catch (e) {
+            console.error('Error parsing trades data:', e);
+        }
+    }
+});
+
+// Загрузить ещё сделок
+function loadMoreTrades() {
+    const tbody = document.getElementById('tradesTableBody');
+    const endIndex = Math.min(currentTradeIndex + 50, allTrades.length);
+
+    for (let i = currentTradeIndex; i < endIndex; i++) {
+        const trade = allTrades[i];
+        const row = createTradeRow(trade, i + 1);
+        tbody.innerHTML += row;
+    }
+
+    currentTradeIndex = endIndex;
+    document.getElementById('shownTrades').textContent = currentTradeIndex;
+
+    if (currentTradeIndex >= allTrades.length) {
+        document.getElementById('loadMoreSection').style.display = 'none';
+    }
+}
+
+// Показать все сделки
+function showAllTrades() {
+    const tbody = document.getElementById('tradesTableBody');
+
+    for (let i = currentTradeIndex; i < allTrades.length; i++) {
+        const trade = allTrades[i];
+        const row = createTradeRow(trade, i + 1);
+        tbody.innerHTML += row;
+    }
+
+    currentTradeIndex = allTrades.length;
+    document.getElementById('shownTrades').textContent = currentTradeIndex;
+    document.getElementById('loadMoreSection').style.display = 'none';
+
+    showNotification(`Загружено все ${allTrades.length} сделок`, 'success');
+}
+
+// Создать строку таблицы для сделки
+function createTradeRow(trade, index) {
+    const tradeType = trade.type || trade.order_type || 'unknown';
+    const typeHtml = tradeType === 'long'
+        ? '<span class="badge bg-success">Long</span>'
+        : '<span class="badge bg-danger">Short</span>';
+
+    const pnl = trade.pnl || 0;
+    const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
+    const entryTime = trade.entry_time || '-';
+
+    return `
+        <tr>
+            <td>${index}</td>
+            <td>${typeHtml}</td>
+            <td>$${(trade.entry_price || 0).toFixed(2)}</td>
+            <td>$${(trade.exit_price || 0).toFixed(2)}</td>
+            <td>${(trade.volume || trade.quantity || 0).toFixed(4)}</td>
+            <td class="${pnlClass}">$${pnl.toFixed(2)}</td>
+            <td class="${pnlClass}">${(trade.pnl_percent || 0).toFixed(2)}%</td>
+            <td><small>${entryTime}</small></td>
+        </tr>
+    `;
+}
+
+// Экспорт в CSV
+function exportTradesToCsv() {
+    if (!allTrades || allTrades.length === 0) {
+        showNotification('Нет сделок для экспорта', 'warning');
+        return;
+    }
+
+    let csv = 'Index,Type,Entry Price,Exit Price,Volume,PnL,PnL %,Entry Time,Exit Time\n';
+
+    allTrades.forEach((trade, index) => {
+        const tradeType = trade.type || trade.order_type || 'unknown';
+        csv += `${index + 1},${tradeType},${trade.entry_price},${trade.exit_price},${trade.volume || trade.quantity},${trade.pnl},${trade.pnl_percent},"${trade.entry_time}","${trade.exit_time}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trades_{{ task_id[:8] }}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+
+    showNotification('CSV файл скачан', 'success');
+}
+
+// Просмотр полного отчета
+async function viewFullReport() {
+    try {
+        showNotification('Генерация полного отчета...', 'info');
+
+        const response = await fetch(`/api/generate-report/{{ task_id }}`);
+        const result = await response.json();
+
+        if (result.success) {
+            showNotification('Отчет сгенерирован!', 'success');
+            // Переходим на страницу просмотра отчета
+            setTimeout(() => {
+                window.location.href = `/report/${result.task_id}`;
+            }, 1000);
+        } else {
+            showNotification(`Ошибка: ${result.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка: ${error.message}`, 'error');
+    }
+}
+
+// Поделиться результатами
+function shareResults() {
+    const url = window.location.href;
+    if (navigator.share) {
+        navigator.share({
+            title: 'Результаты бэктеста',
+            text: 'Посмотрите результаты моего бэктеста',
+            url: url
+        });
+    } else {
+        // Fallback - копирование в буфер обмена
+        navigator.clipboard.writeText(url).then(() => {
+            showNotification('Ссылка скопирована в буфер обмена', 'success');
+        });
+    }
+}
+
+// Показ уведомлений
+function showNotification(message, type = 'info') {
+    const alertClass = {
+        'success': 'alert-success',
+        'error': 'alert-danger',
+        'warning': 'alert-warning',
+        'info': 'alert-info'
+    }[type] || 'alert-info';
+
+    const notification = document.createElement('div');
+    notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+    notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+
+// Показать/скрыть полную конфигурацию
+function toggleFullConfig() {
+    const section = document.getElementById('fullConfigSection');
+    if (section.style.display === 'none') {
+        section.style.display = 'block';
+    } else {
+        section.style.display = 'none';
+    }
+}
+</script>
+{% endblock %}

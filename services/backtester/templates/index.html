@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}Главная - Crypto Backtester{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-5">
+    <!-- Hero Section -->
+    <div class="hero-section mb-5">
+        <div class="position-relative hero-content">
+            <h1 class="display-3 fw-bold mb-4">
+                Crypto Backtester
+            </h1>
+            <p class="lead mb-5 hero-description">
+                Профессиональный инструмент для тестирования торговых стратегий с поддержкой DCA, Мартингейл и 100+ криптобирж
+            </p>
+            <div class="d-flex flex-wrap gap-3">
+                <a class="btn btn-light btn-lg" href="{{ url_for('config_page') }}">
+                    <i class="fas fa-play me-2"></i>Начать бэктест
+                </a>
+                <a class="btn btn-outline-light btn-lg" href="{{ url_for('strategies_page') }}">
+                    <i class="fas fa-bookmark me-2"></i>Стратегии
+                </a>
+                <a class="btn btn-outline-light btn-lg" href="{{ url_for('results_page') }}">
+                    <i class="fas fa-chart-bar me-2"></i>Результаты
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Features Section -->
+    <div class="row mb-5">
+        <div class="col-12 mb-4">
+            <h2 class="fw-bold text-gradient mb-2">Основные возможности</h2>
+            <p class="text-muted">Всё необходимое для профессионального бэктестирования</p>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-primary text-white">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <h5 class="fw-bold mb-2">Long/Short стратегии</h5>
+                <p class="text-muted mb-0">Торговля в обе стороны с гибкими настройками входа и выхода</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-success text-white">
+                    <i class="fas fa-layer-group"></i>
+                </div>
+                <h5 class="fw-bold mb-2">DCA усреднение</h5>
+                <p class="text-muted mb-0">Dollar Cost Averaging с настраиваемыми шагами и объемами</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-danger text-white">
+                    <i class="fas fa-dice"></i>
+                </div>
+                <h5 class="fw-bold mb-2">Мартингейл</h5>
+                <p class="text-muted mb-0">Экспоненциальное, линейное и Фибоначчи увеличение объемов</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-warning text-white">
+                    <i class="fas fa-exchange-alt"></i>
+                </div>
+                <h5 class="fw-bold mb-2">100+ бирж</h5>
+                <p class="text-muted mb-0">Загрузка данных через CCXT с Binance, OKX, Bybit и других</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-info text-white">
+                    <i class="fas fa-shield-alt"></i>
+                </div>
+                <h5 class="fw-bold mb-2">Trailing Stops</h5>
+                <p class="text-muted mb-0">Динамические Take Profit и Stop Loss для защиты прибыли</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-purple text-white">
+                    <i class="fas fa-chart-bar"></i>
+                </div>
+                <h5 class="fw-bold mb-2">Детальная аналитика</h5>
+                <p class="text-muted mb-0">Графики, метрики риска, отчеты в PDF/CSV формате</p>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="feature-card">
+                <div class="feature-icon bg-telegram text-white">
+                    <i class="fab fa-telegram-plane"></i>
+                </div>
+                <h5 class="fw-bold mb-2">Telegram Market Bot</h5>
+                <p class="text-muted mb-0">Получайте сводки рынка дважды в день (00:00 и 12:00 UTC)</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Telegram Bot Section -->
+    <div class="row mb-5">
+        <div class="col-12">
+            <div class="card bg-telegram text-white">
+                <div class="card-body p-4">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h3 class="fw-bold mb-3">
+                                <i class="fab fa-telegram-plane me-2"></i>
+                                Market Analytics Telegram Bot
+                            </h3>
+                            <p class="mb-3">
+                                Получайте аналитические сводки криптовалютного рынка прямо в Telegram!
+                                Бот отправляет данные дважды в день: в полночь (00:00 UTC) и в полдень (12:00 UTC).
+                            </p>
+                            <ul class="list-unstyled mb-0">
+                                <li class="mb-2"><i class="fas fa-check-circle me-2"></i>Fear & Greed Index</li>
+                                <li class="mb-2"><i class="fas fa-check-circle me-2"></i>BTC Dominance & Altseason Index</li>
+                                <li class="mb-2"><i class="fas fa-check-circle me-2"></i>Market Narrative Analysis</li>
+                                <li class="mb-2"><i class="fas fa-check-circle me-2"></i>Макро показатели (DXY, SPX, NASDAQ)</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="telegram-bot-qr mb-3">
+                                <i class="fab fa-telegram-plane" style="font-size: 80px;"></i>
+                            </div>
+                            <a href="https://t.me/CryptoLogs_DailyAlerts_bot" target="_blank" class="btn btn-light btn-lg">
+                                <i class="fab fa-telegram-plane me-2"></i>Открыть бота
+                            </a>
+                            <p class="mt-2 small mb-0">Используйте /start для начала</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Start -->
+    <div class="row mb-5">
+        <div class="col-12 mb-4">
+            <h2 class="fw-bold text-gradient mb-2">Быстрый старт</h2>
+            <p class="text-muted">Начните работу за три простых шага</p>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="step-card">
+                <div class="step-number bg-primary">1</div>
+                <h5 class="fw-bold mb-3">Выберите стратегию</h5>
+                <p class="text-muted mb-4">Используйте готовые конфигурации или создайте свою</p>
+                <a href="{{ url_for('config_page') }}" class="btn btn-primary">
+                    <i class="fas fa-cog me-2"></i>Конфигурация
+                </a>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="step-card">
+                <div class="step-number bg-success">2</div>
+                <h5 class="fw-bold mb-3">Загрузите данные</h5>
+                <p class="text-muted mb-4">Из CSV файлов или напрямую с бирж через API</p>
+                <button class="btn btn-success" onclick="showDataDownload()">
+                    <i class="fas fa-download me-2"></i>Загрузить данные
+                </button>
+            </div>
+        </div>
+
+        <div class="col-lg-4 col-md-6 mb-4">
+            <div class="step-card">
+                <div class="step-number bg-info">3</div>
+                <h5 class="fw-bold mb-3">Анализируйте результаты</h5>
+                <p class="text-muted mb-4">Просматривайте графики, статистику и отчеты</p>
+                <a href="{{ url_for('results_page') }}" class="btn btn-info">
+                    <i class="fas fa-chart-bar me-2"></i>Результаты
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-server me-2 text-primary"></i>
+                        Статус системы
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="status-item">
+                        <span class="fw-semibold">CCXT</span>
+                        <span class="badge bg-success">Активен</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="fw-semibold">Matplotlib</span>
+                        <span class="badge bg-success">Активен</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="fw-semibold">Pandas</span>
+                        <span class="badge bg-success">Активен</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="fw-semibold">API доступ</span>
+                        <span class="badge bg-success">Доступен</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-bolt me-2 text-primary"></i>
+                        Готовые стратегии
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary" onclick="loadPresetStrategy('conservative_long')">
+                            <i class="fas fa-shield-alt me-2"></i>Консервативная стратегия
+                        </button>
+                        <button class="btn btn-danger" onclick="loadPresetStrategy('aggressive_martingale')">
+                            <i class="fas fa-fire me-2"></i>Агрессивный мартингейл
+                        </button>
+                        <button class="btn btn-info" onclick="loadPresetStrategy('fibonacci_dca')">
+                            <i class="fas fa-chart-line me-2"></i>Фибоначчи DCA
+                        </button>
+                        <button class="btn btn-secondary" onclick="showExchanges()">
+                            <i class="fas fa-list me-2"></i>Список бирж
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function loadPresetStrategy(strategyName) {
+        // Redirect to config page with preset strategy
+        window.location.href = `/config?preset=${strategyName}`;
+    }
+
+    // Poll for running tasks
+    function updateRunningTasks() {
+        // This would fetch and display currently running backtests
+        // For now, just show placeholder
+    }
+
+    // Update tasks every 5 seconds
+    setInterval(updateRunningTasks, 5000);
+    updateRunningTasks();
+</script>
+{% endblock %} 

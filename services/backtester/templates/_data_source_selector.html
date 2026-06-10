@@ -1,0 +1,350 @@
+<!-- Data Source Selector - Reusable Component -->
+<div class="row">
+    <div class="col-md-6">
+        <h6>Источник данных</h6>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="radio" name="dataSource" id="dataCsv" value="csv" checked>
+            <label class="form-check-label" for="dataCsv">
+                CSV файл
+            </label>
+        </div>
+        <div class="mb-3" id="csvFileGroup">
+            <label for="csvFile" class="form-label">CSV файл</label>
+            <select class="form-select" id="csvFile">
+                {% if csv_files %}
+                    {% for csv_file in csv_files %}
+                        {% set parts = csv_file.name.split('_') %}
+                        {% set is_dual = 'dual' in csv_file.name %}
+                        {% if is_dual %}
+                            {% set symbol = parts[0] %}
+                            {% set timeframe = parts[2] if parts|length > 2 else '' %}
+                        {% else %}
+                            {% set symbol = parts[0] %}
+                            {% set timeframe = parts[1] if parts|length > 1 else '' %}
+                        {% endif %}
+                        <option value="{{ csv_file.path }}"
+                                data-range="{{ csv_file.date_range }}"
+                                data-rows="{{ csv_file.rows }}"
+                                data-size="{{ csv_file.size }}"
+                                data-dual="{{ 'true' if is_dual else 'false' }}">
+                            {{ symbol }} - {{ timeframe }}{% if is_dual %} 🔄 [Dual]{% endif %}
+                        </option>
+                    {% endfor %}
+                {% else %}
+                    <option value="">Нет доступных CSV файлов</option>
+                {% endif %}
+            </select>
+            <div class="mt-2 p-2 bg-light rounded" id="csvFileInfo" style="display: none;">
+                <small>
+                    <div id="csvDualInfo" style="display: none;">
+                        <span class="badge bg-info mb-1">🔄 Dual Timeframe режим</span>
+                    </div>
+                    <div><strong>Период:</strong> <span id="csvPeriod">-</span></div>
+                    <div><strong>Свечей:</strong> <span id="csvRows">-</span></div>
+                    <div><strong>Размер:</strong> <span id="csvSize">-</span></div>
+                </small>
+            </div>
+            <div class="mt-3" id="csvFileStrategyGroup" style="display: none;">
+                <label for="csvFileStrategy" class="form-label">
+                    Strategy TF CSV файл
+                    <i class="fas fa-info-circle text-muted ms-1" title="Выберите CSV с более высоким таймфреймом для стратегии"></i>
+                </label>
+                <select class="form-select" id="csvFileStrategy">
+                    <option value="">-- Выберите парный файл --</option>
+                    {% if csv_files %}
+                        {% for csv_file in csv_files %}
+                            {% set parts = csv_file.name.split('_') %}
+                            {% set is_dual = 'dual' in csv_file.name %}
+                            {% if is_dual %}
+                                {% set symbol = parts[0] %}
+                                {% set timeframe = parts[2] if parts|length > 2 else '' %}
+                                {% set timestamp = parts[3] if parts|length > 3 else '' %}
+                            {% else %}
+                                {% set symbol = parts[0] %}
+                                {% set timeframe = parts[1] if parts|length > 1 else '' %}
+                                {% set timestamp = parts[2] if parts|length > 2 else '' %}
+                            {% endif %}
+                            <option value="{{ csv_file.path }}"
+                                    data-symbol="{{ symbol }}"
+                                    data-timeframe="{{ timeframe }}"
+                                    data-timestamp="{{ timestamp }}">
+                                {{ symbol }} - {{ timeframe }}{% if is_dual %} 🔄{% endif %}
+                            </option>
+                        {% endfor %}
+                    {% endif %}
+                </select>
+                <small class="text-muted">Для dual файлов выбирается автоматически при выборе execution файла</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="radio" name="dataSource" id="dataApi" value="api">
+            <label class="form-check-label" for="dataApi">
+                API биржи
+            </label>
+        </div>
+        <div class="mb-3" id="apiGroup" style="display: none;">
+            <label for="exchange" class="form-label">Биржа</label>
+            <select class="form-select" id="exchange">
+                <option value="binance">Binance</option>
+                <option value="okx">OKX</option>
+                <option value="bybit">Bybit</option>
+                <option value="kucoin">KuCoin</option>
+            </select>
+            <div class="mt-2">
+                <label for="apiSymbol" class="form-label">Символ</label>
+                <input type="text" class="form-control" id="apiSymbol" value="BTC/USDT">
+            </div>
+            <div class="mt-2" id="singleTimeframeGroup">
+                <label for="timeframe" class="form-label">Таймфрейм</label>
+                <select class="form-select" id="timeframe">
+                    <option value="1m">1 минута</option>
+                    <option value="5m">5 минут</option>
+                    <option value="15m" selected>15 минут</option>
+                    <option value="1h">1 час</option>
+                    <option value="4h">4 часа</option>
+                    <option value="1d">1 день</option>
+                </select>
+            </div>
+            <div id="dualTimeframeGroup" style="display: none;">
+                <div class="alert alert-warning mt-2 mb-2 py-2" role="alert">
+                    <small>
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        Dual режим загружает данные на низком таймфрейме, что займет больше времени
+                    </small>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-6">
+                        <label for="executionTimeframe" class="form-label">
+                            Execution TF
+                            <i class="fas fa-question-circle text-muted" title="Таймфрейм для исполнения ордеров"></i>
+                        </label>
+                        <select class="form-select form-select-sm" id="executionTimeframe">
+                            <option value="1m" selected>1 минута</option>
+                            <option value="5m">5 минут</option>
+                            <option value="15m">15 минут</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label for="strategyTimeframe" class="form-label">
+                            Strategy TF
+                            <i class="fas fa-question-circle text-muted" title="Таймфрейм для индикаторов/сигналов"></i>
+                        </label>
+                        <select class="form-select form-select-sm" id="strategyTimeframe">
+                            <option value="5m">5 минут</option>
+                            <option value="15m" selected>15 минут</option>
+                            <option value="1h">1 час</option>
+                            <option value="4h">4 часа</option>
+                            <option value="1d">1 день</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-2">
+                <label for="marketType" class="form-label">Тип рынка</label>
+                <select class="form-select" id="marketType">
+                    <option value="spot" selected>Спот</option>
+                    <option value="swap">Фьючерсы (Swap/Perpetual)</option>
+                    <option value="futures">Фьючерсы с экспирацией</option>
+                </select>
+                <small class="form-text text-muted">
+                    <i class="fas fa-info-circle"></i> Swap - бессрочные контракты, Futures - с датой истечения
+                </small>
+            </div>
+            <div class="mt-2">
+                <label class="form-label">Период загрузки</label>
+                <div class="btn-group w-100" role="group" id="periodButtons">
+                    <input type="radio" class="btn-check" name="dataPeriod" id="period1m" value="1m" checked>
+                    <label class="btn btn-outline-primary btn-sm" for="period1m">1 месяц</label>
+
+                    <input type="radio" class="btn-check" name="dataPeriod" id="period3m" value="3m">
+                    <label class="btn btn-outline-primary btn-sm" for="period3m">3 месяца</label>
+
+                    <input type="radio" class="btn-check" name="dataPeriod" id="period6m" value="6m">
+                    <label class="btn btn-outline-primary btn-sm" for="period6m">6 месяцев</label>
+
+                    <input type="radio" class="btn-check" name="dataPeriod" id="period1y" value="1y">
+                    <label class="btn btn-outline-primary btn-sm" for="period1y">1 год</label>
+
+                    <input type="radio" class="btn-check" name="dataPeriod" id="periodAll" value="all">
+                    <label class="btn btn-outline-primary btn-sm" for="periodAll">Все</label>
+                </div>
+            </div>
+            <div class="mt-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="useCustomDateRange" onchange="toggleCustomDateRange()">
+                    <label class="form-check-label" for="useCustomDateRange">
+                        Указать свой диапазон дат
+                    </label>
+                </div>
+            </div>
+            <div id="customDateRangeGroup" style="display: none;">
+                <div class="mt-2">
+                    <label for="startDate" class="form-label">Начальная дата</label>
+                    <input type="date" class="form-control" id="startDate" value="">
+                </div>
+                <div class="mt-2">
+                    <label for="endDate" class="form-label">Конечная дата</label>
+                    <input type="date" class="form-control" id="endDate" value="">
+                </div>
+            </div>
+            <div class="mt-2">
+                <button type="button" class="btn btn-outline-primary btn-sm" onclick="downloadDataFromApi()">
+                    <i class="fas fa-download me-1"></i>Загрузить данные
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Dual Timeframe checkbox - shared for both CSV and API -->
+<div class="mt-3">
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="useDualTimeframe">
+        <label class="form-check-label" for="useDualTimeframe">
+            <strong>Dual Timeframe режим</strong>
+            <i class="fas fa-info-circle text-muted ms-1" title="Исполнение на низком TF, сигналы на высоком TF"></i>
+        </label>
+    </div>
+    <small class="text-muted">
+        Используйте для более точного исполнения ордеров при стратегиях на высоких таймфреймах
+    </small>
+</div>
+
+<!-- Shared JavaScript for Data Source Selector -->
+<script>
+// Update dual timeframe UI visibility
+function updateDualTimeframeUI() {
+    const isDualEnabled = document.getElementById('useDualTimeframe')?.checked || false;
+    const isCSVSource = document.querySelector('input[name="dataSource"]:checked')?.value === 'csv';
+
+    const singleGroup = document.getElementById('singleTimeframeGroup');
+    const dualGroup = document.getElementById('dualTimeframeGroup');
+    const csvStrategyGroup = document.getElementById('csvFileStrategyGroup');
+
+    if (isCSVSource) {
+        // CSV mode: only show/hide csvFileStrategyGroup
+        if (csvStrategyGroup) {
+            csvStrategyGroup.style.display = isDualEnabled ? 'block' : 'none';
+        }
+    } else {
+        // API mode: show/hide API timeframe selectors
+        if (isDualEnabled) {
+            if (singleGroup) singleGroup.style.display = 'none';
+            if (dualGroup) dualGroup.style.display = 'block';
+        } else {
+            if (singleGroup) singleGroup.style.display = 'block';
+            if (dualGroup) dualGroup.style.display = 'none';
+        }
+        // Always hide CSV strategy selector for API
+        if (csvStrategyGroup) csvStrategyGroup.style.display = 'none';
+    }
+}
+
+// Toggle data source visibility (CSV vs API)
+document.querySelectorAll('input[name="dataSource"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        const csvGroup = document.getElementById('csvFileGroup');
+        const apiGroup = document.getElementById('apiGroup');
+
+        if (this.value === 'csv') {
+            csvGroup.style.display = 'block';
+            apiGroup.style.display = 'none';
+        } else {
+            csvGroup.style.display = 'none';
+            apiGroup.style.display = 'block';
+        }
+
+        // Update dual timeframe UI after changing data source
+        updateDualTimeframeUI();
+    });
+});
+
+// Show CSV file info when selected
+const csvFileSelect = document.getElementById('csvFile');
+if (csvFileSelect) {
+    csvFileSelect.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        const period = selectedOption.getAttribute('data-range') || '-';
+        const rows = selectedOption.getAttribute('data-rows') || '-';
+        const size = selectedOption.getAttribute('data-size') || '-';
+        const isDual = selectedOption.getAttribute('data-dual') === 'true';
+
+        // Update file info display
+        document.getElementById('csvPeriod').textContent = period;
+        document.getElementById('csvRows').textContent = rows;
+
+        const sizeElement = document.getElementById('csvSize');
+        if (sizeElement) {
+            const sizeKb = (parseInt(size) / 1024).toFixed(2);
+            sizeElement.textContent = sizeKb + ' KB';
+        }
+
+        // Show/hide dual badge
+        const dualInfo = document.getElementById('csvDualInfo');
+        if (dualInfo) {
+            dualInfo.style.display = isDual ? 'block' : 'none';
+        }
+
+        // Show info box
+        document.getElementById('csvFileInfo').style.display = 'block';
+
+        // Auto-select paired CSV file if dual mode is enabled
+        const isDualModeEnabled = document.getElementById('useDualTimeframe')?.checked || false;
+        if (isDualModeEnabled && isDual) {
+            const selectedFile = this.value;
+            const fileName = selectedFile.split('/').pop();
+
+            // Parse file name: SYMBOL_dual_TIMEFRAME_TIMESTAMP.csv
+            const parts = fileName.split('_');
+            if (parts.length >= 4) {
+                const symbol = parts[0];
+                const execTimeframe = parts[2];
+                const timestamp = parts[3].replace('.csv', '');
+
+                // Find paired file with same symbol and timestamp but different timeframe
+                const strategySelect = document.getElementById('csvFileStrategy');
+                if (strategySelect) {
+                    for (let option of strategySelect.options) {
+                        const optSymbol = option.getAttribute('data-symbol');
+                        const optTimeframe = option.getAttribute('data-timeframe');
+                        const optTimestamp = option.getAttribute('data-timestamp');
+
+                        if (optSymbol === symbol &&
+                            optTimestamp === timestamp &&
+                            optTimeframe !== execTimeframe) {
+                            // Found paired file!
+                            option.selected = true;
+                            console.log(`Auto-selected paired file: ${option.value}`);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Trigger initial display
+    if (csvFileSelect.options.length > 0) {
+        csvFileSelect.dispatchEvent(new Event('change'));
+    }
+}
+
+// Toggle custom date range (simple version - can be overridden by page)
+if (typeof toggleCustomDateRange !== 'function') {
+    function toggleCustomDateRange() {
+        const checkbox = document.getElementById('useCustomDateRange');
+        const customDateRangeGroup = document.getElementById('customDateRangeGroup');
+        customDateRangeGroup.style.display = checkbox.checked ? 'block' : 'none';
+    }
+}
+
+// Toggle Dual Timeframe mode
+const dualTimeframeCheckbox = document.getElementById('useDualTimeframe');
+if (dualTimeframeCheckbox) {
+    dualTimeframeCheckbox.addEventListener('change', function() {
+        updateDualTimeframeUI();
+    });
+}
+</script>

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}Отчет {{ task_id[:8] }} - Crypto Backtester{% endblock %}
+
+{% block content %}
+<div class="row mt-4">
+    <div class="col-12">
+        <!-- Заголовок -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">
+                        <i class="fas fa-file-alt me-2"></i>
+                        Полный отчет
+                    </h5>
+                    <div>
+                        <span class="badge bg-light text-dark me-2">ID: {{ task_id[:8] }}...</span>
+                        <a href="{{ url_for('view_results', task_id=task_id) }}" class="btn btn-outline-light btn-sm">
+                            <i class="fas fa-arrow-left me-1"></i>Назад к результатам
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Текстовый отчет -->
+{% if files.txt_content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-file-text me-2"></i>
+                    Сводка результатов
+                </h6>
+            </div>
+            <div class="card-body">
+                <pre class="mb-0" style="white-space: pre-wrap;">{{ files.txt_content }}</pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Графики -->
+{% if files.images %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-chart-line me-2"></i>
+                    Графики и визуализации
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for image in files.images %}
+                    <div class="col-md-6 mb-4">
+                        <div class="card">
+                            <div class="card-header bg-light">
+                                <small class="text-muted">{{ image.name }}</small>
+                            </div>
+                            <div class="card-body text-center p-0">
+                                <img src="{{ image.path }}" class="img-fluid" alt="{{ image.name }}" style="max-width: 100%; height: auto;">
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Файлы для скачивания -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="card-title mb-0">
+                    <i class="fas fa-download me-2"></i>
+                    Скачать файлы
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% if files.csv %}
+                    <div class="col-md-4 mb-2">
+                        <a href="{{ url_for('download_csv', task_id=task_id) }}" class="btn btn-success w-100">
+                            <i class="fas fa-file-csv me-2"></i>Скачать CSV
+                        </a>
+                    </div>
+                    {% endif %}
+                    {% if files.json %}
+                    <div class="col-md-4 mb-2">
+                        <a href="{{ url_for('download_json', task_id=task_id) }}" class="btn btn-info w-100">
+                            <i class="fas fa-file-code me-2"></i>Скачать JSON
+                        </a>
+                    </div>
+                    {% endif %}
+                    <div class="col-md-4 mb-2">
+                        <button class="btn btn-outline-secondary w-100" onclick="window.print()">
+                            <i class="fas fa-print me-2"></i>Печать
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Если нет файлов -->
+{% if not files.images and not files.txt_content %}
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-warning text-center">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            Отчет не содержит данных для отображения. Попробуйте сгенерировать отчет заново.
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

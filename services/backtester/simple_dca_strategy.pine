@@ -1,0 +1,180 @@
+//@version=6
+strategy('Simple DCA Strategy', overlay = true, pyramiding = 10, initial_capital = 1000, default_qty_type = strategy.cash, commission_type = strategy.commission.percent, commission_value = 0.04)
+
+// ============================================================================
+// ⚠️ WARNING: WORK IN PROGRESS - NOT READY FOR PRODUCTION
+// ============================================================================
+// Status: In Development
+// Last Updated: 2026-01-07
+//
+// Known Issues:
+// - Requires TradingView Premium subscription for full backtest range control
+// - Liquidation logic needs real-world testing
+// - strategy.exit() may need optimization for multiple entries (BO + SOs)
+//
+// Pending Features:
+// - SHORT positions support
+// - Trailing stop loss
+// - Advanced risk management (max drawdown, max duration)
+//
+// Testing Required:
+// - Verify liquidation price calculation accuracy
+// - Test with different leverage levels (1x, 10x, 50x, 100x)
+// - Compare results with real exchange data
+// ============================================================================
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// --- Volume ---
+base_order_size = input.float(100, 'Base Order Size (USDT)', minval = 1, group = 'Volume')
+safety_order_size = input.float(100, 'Safety Order Size (USDT)', minval = 1, group = 'Volume')
+use_leverage = input.bool(true, 'Use Leverage', group = 'Volume')
+leverage = input.int(10, 'Leverage', minval = 1, maxval = 125, group = 'Volume')
+
+// --- DCA ---
+max_safety_orders = input.int(5, 'Max Safety Orders', minval = 0, maxval = 10, group = 'DCA')
+safety_order_step = input.float(2.0, 'Safety Order Step %', minval = 0.1, step = 0.1, group = 'DCA')
+volume_multiplier = input.float(2.0, 'Volume Multiplier (Martingale)', minval = 1.0, step = 0.1, group = 'DCA', tooltip = 'SO size = base * multiplier^level. 1.0 = fixed, 2.0 = double each time')
+
+// --- TP/SL ---
+take_profit_percent = input.float(3.0, 'Take Profit %', minval = 0.1, step = 0.1, group = 'TP/SL')
+use_stop_loss = input.bool(false, 'Use Stop Loss', group = 'TP/SL')
+stop_loss_percent = input.float(10.0, 'Stop Loss %', minval = 0.1, step = 0.1, group = 'TP/SL')
+
+// --- Entry Filter ---
+use_rsi_filter = input.bool(true, 'Use RSI Filter', group = 'Entry')
+rsi_period = input.int(14, 'RSI Period', minval = 1, group = 'Entry')
+rsi_threshold = input.float(30, 'RSI Threshold (< for entry)', minval = 0, maxval = 100, group = 'Entry')
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+
+rsi = ta.rsi(close, rsi_period)
+entry_condition = use_rsi_filter ? rsi < rsi_threshold : true
+
+// ============================================================================
+// POSITION TRACKING
+// ============================================================================
+
+var float avg_price = na
+var float total_quantity = 0.0
+var int so_count = 0
+var bool in_position = false
+
+// ============================================================================
+// LIQUIDATION CALCULATION
+// ============================================================================
+
+// Calculate liquidation price for LONG position
+get_liquidation_price() =>
+    if use_leverage and not na(avg_price) and in_position
+        maintenance_margin = 0.005  // 0.5% maintenance margin
+        liq_price = avg_price * (1 - 1 / leverage + maintenance_margin)
+        liq_price
+    else
+        na
+
+// ============================================================================
+// ENTRY LOGIC
+// ============================================================================
+
+// Base Order Entry
+if not in_position and entry_condition
+    // Convert USDT to coin quantity
+    bo_qty = base_order_size / close
+    // Apply leverage
+    bo_qty_final = use_leverage ? bo_qty * leverage : bo_qty
+    strategy.entry('BO', strategy.long, qty = bo_qty_final)
+
+    // Initialize tracking
+    avg_price := close
+    total_quantity := bo_qty_final
+    so_count := 0
+    in_position := true
+    in_position
+
+// ============================================================================
+// DCA (SAFETY ORDERS)
+// ============================================================================
+
+if in_position and so_count < max_safety_orders
+    // Calculate next SO level
+    next_so_level = avg_price * (1 - (so_count + 1) * safety_order_step / 100)
+
+    // Check if price hit SO level
+    if low <= next_so_level
+        // Calculate SO size with martingale (multiplier^level)
+        so_size_usdt = safety_order_size * math.pow(volume_multiplier, so_count)
+
+        // Convert USDT to coin quantity
+        so_qty = so_size_usdt / close
+        // Apply leverage
+        so_qty_final = use_leverage ? so_qty * leverage : so_qty
+
+        // Execute SO
+        strategy.entry('SO_' + str.tostring(so_count + 1), strategy.long, qty = so_qty_final)
+
+        // Update average price
+        avg_price := (avg_price * total_quantity + close * so_qty_final) / (total_quantity + so_qty_final)
+        total_quantity := total_quantity + so_qty_final
+        so_count := so_count + 1
+        so_count
+
+// ============================================================================
+// EXIT LOGIC
+// ============================================================================
+
+// Check liquidation
+liq_price = get_liquidation_price()
+if in_position and not na(liq_price) and low <= liq_price
+    strategy.close_all(comment = 'Liquidation')
+    // Reset tracking
+    avg_price := na
+    total_quantity := 0.0
+    so_count := 0
+    in_position := false
+
+if in_position and not na(avg_price)
+    // Calculate TP/SL prices
+    tp_price = avg_price * (1 + take_profit_percent / 100)
+    sl_price = use_stop_loss ? avg_price * (1 - stop_loss_percent / 100) : na
+
+    // Exit conditions
+    if not na(sl_price)
+        strategy.exit('TP/SL', limit = tp_price, stop = sl_price)
+    else
+        strategy.exit('TP', limit = tp_price)
+
+// Reset tracking when position closes
+if in_position and strategy.position_size == 0
+    avg_price := na
+    total_quantity := 0.0
+    so_count := 0
+    in_position := false
+    in_position
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Plot average price
+plot(in_position and not na(avg_price) ? avg_price : na, title = 'Avg Price', color = color.blue, linewidth = 2)
+
+// Plot TP
+tp_plot = in_position and not na(avg_price) ? avg_price * (1 + take_profit_percent / 100) : na
+plot(tp_plot, title = 'TP', color = color.green, linewidth = 1, style = plot.style_line)
+
+// Plot SL
+sl_plot = in_position and use_stop_loss and not na(avg_price) ? avg_price * (1 - stop_loss_percent / 100) : na
+plot(sl_plot, title = 'SL', color = color.red, linewidth = 1, style = plot.style_line)
+
+// Plot Liquidation Price
+liq_plot = get_liquidation_price()
+plot(liq_plot, title = 'Liquidation', color = color.new(color.red, 0), linewidth = 2, style = plot.style_cross)
+
+// Plot RSI for reference
+hline(rsi_threshold, 'RSI Threshold', color = color.gray, linestyle = hline.style_dashed)
+plot(rsi, title = 'RSI', color = color.purple, display = display.none)

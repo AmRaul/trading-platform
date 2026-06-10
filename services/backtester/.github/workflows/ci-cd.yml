@@ -1,0 +1,416 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          pytest test_indicators.py -v --cov=. --cov-report=xml --cov-report=term
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+
+  lint:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+
+      - name: Run flake8
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        continue-on-error: true
+
+      - name: Check code formatting with black
+        run: black --check .
+        continue-on-error: true
+
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            image-suffix: ''
+            context: .
+          - dockerfile: Dockerfile.web
+            image-suffix: '-web'
+            context: .
+          - dockerfile: Dockerfile
+            image-suffix: '-analytics'
+            context: ./market-analytics
+          - dockerfile: bot/Dockerfile
+            image-suffix: '-bot'
+            context: ./market-analytics
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.image-suffix }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+        continue-on-error: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        continue-on-error: true
+
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: [build, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy config files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "nginx/backtester.conf,docker-compose.prod.yml,init-db.sql,migrations/"
+          target: "/opt/backtester/"
+          strip_components: 0
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          debug: true
+          script: |
+            cd /opt/backtester
+
+            # Приводим имя репозитория к lowercase для Docker
+            REPO_LOWERCASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            echo "📦 Repository: $REPO_LOWERCASE"
+
+            # Создаём .env файл из GitHub Secrets
+            echo "Creating .env file..."
+            cat > .env << EOF
+            GITHUB_REPOSITORY=$REPO_LOWERCASE
+            DOMAIN=${{ secrets.DOMAIN }}
+            LETSENCRYPT_EMAIL=${{ secrets.LETSENCRYPT_EMAIL }}
+            WEB_PORT=${{ secrets.WEB_PORT }}
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            EOF
+
+            # Логин в GitHub Container Registry
+            echo "🔐 Logging in to GitHub Container Registry..."
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to login to ghcr.io"
+              exit 1
+            fi
+            echo "✅ Successfully logged in to ghcr.io"
+
+            # Показываем текущую версию образа
+            echo "📦 Current image version:"
+            docker images ghcr.io/${REPO_LOWERCASE}-web:latest --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}" || echo "No local image found"
+
+            # Создаём pre-deployment бэкап базы данных ПЕРЕД обновлением
+            echo "🔒 Creating pre-deployment backup..."
+            BACKUP_DIR="/opt/backtester/backups"
+            BACKUP_FILE="$BACKUP_DIR/pre_deploy_$(date +%Y%m%d_%H%M%S).sql.gz"
+            LAST_GOOD_BACKUP=""
+
+            mkdir -p "$BACKUP_DIR"
+
+            # Проверяем что контейнер postgres запущен
+            if docker ps --format '{{.Names}}' | grep -q "backtester_postgres_prod"; then
+              docker exec backtester_postgres_prod pg_dump -U ${{ secrets.DB_USER }} -d backtester --clean --if-exists 2>/dev/null | gzip > "$BACKUP_FILE"
+
+              if [ $? -eq 0 ]; then
+                BACKUP_SIZE_BYTES=$(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE")
+                BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+                echo "✅ Pre-deployment backup created: $BACKUP_FILE ($BACKUP_SIZE)"
+
+                # Проверяем размер бекапа - если < 5KB, это подозрительно
+                if [ "$BACKUP_SIZE_BYTES" -lt 5120 ]; then
+                  echo "⚠️  WARNING: Backup size is suspiciously small ($BACKUP_SIZE)"
+                  echo "⚠️  Database may be empty or corrupted!"
+
+                  # Ищем последний "хороший" бекап (> 5KB)
+                  LAST_GOOD_BACKUP=$(find "$BACKUP_DIR" -name "*.sql.gz" -type f -size +5k -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+                  if [ -n "$LAST_GOOD_BACKUP" ]; then
+                    GOOD_BACKUP_SIZE=$(du -h "$LAST_GOOD_BACKUP" | cut -f1)
+                    echo "📦 Found last good backup: $(basename $LAST_GOOD_BACKUP) ($GOOD_BACKUP_SIZE)"
+                  fi
+                fi
+              else
+                echo "⚠️  Backup failed, but continuing deployment..."
+              fi
+            else
+              echo "⚠️  PostgreSQL container not running, skipping backup..."
+            fi
+
+            # Обновляем и запускаем основное приложение
+            echo "🚀 Deploying backtester..."
+            export GITHUB_REPOSITORY=$REPO_LOWERCASE
+
+            echo "⬇️  Pulling latest images..."
+            docker compose -f docker-compose.prod.yml pull
+
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to pull images"
+              exit 1
+            fi
+
+            echo "📦 New image versions:"
+            docker images ghcr.io/${REPO_LOWERCASE}-web:latest --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}"
+            docker images ghcr.io/${REPO_LOWERCASE}-analytics:latest --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}"
+            docker images ghcr.io/${REPO_LOWERCASE}-bot:latest --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}"
+
+            echo "🔄 Updating containers (preserving volumes)..."
+            docker compose -f docker-compose.prod.yml up -d --no-recreate --remove-orphans
+
+            if [ $? -ne 0 ]; then
+              echo "⚠️  --no-recreate failed, trying with minimal recreation..."
+              docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            fi
+
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to start containers"
+              exit 1
+            fi
+
+            # Ждём пока postgres стартует
+            echo "⏳ Waiting for PostgreSQL to be ready..."
+            sleep 10
+
+            # Удаляем старые pre-deployment бэкапы (старше 7 дней), НО сохраняем последний хороший
+            if [ -n "$LAST_GOOD_BACKUP" ]; then
+              find "$BACKUP_DIR" -name "pre_deploy_*.sql.gz" -type f -mtime +7 ! -path "$LAST_GOOD_BACKUP" -delete 2>/dev/null || true
+            else
+              find "$BACKUP_DIR" -name "pre_deploy_*.sql.gz" -type f -mtime +7 -delete 2>/dev/null || true
+            fi
+
+            # Применяем все SQL миграции из папки migrations/
+            echo "🗄️  Applying database migrations..."
+            MIGRATION_COUNT=0
+            FAILED_COUNT=0
+
+            for migration_file in /opt/backtester/migrations/*.sql; do
+              if [ -f "$migration_file" ]; then
+                MIGRATION_NAME=$(basename "$migration_file")
+                echo "📄 Applying migration: $MIGRATION_NAME"
+
+                docker exec -i backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester < "$migration_file" 2>&1
+
+                if [ $? -eq 0 ]; then
+                  echo "  ✅ $MIGRATION_NAME applied successfully"
+                  MIGRATION_COUNT=$((MIGRATION_COUNT + 1))
+                else
+                  echo "  ⚠️  $MIGRATION_NAME failed (may be already applied)"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                fi
+              fi
+            done
+
+            echo "📊 Migration summary: $MIGRATION_COUNT successful, $FAILED_COUNT failed/skipped"
+
+            # Проверяем что схема backtester существует
+            echo "🔍 Verifying database schema..."
+            SCHEMA_EXISTS=$(docker exec backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester -tAc "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'backtester');" 2>/dev/null || echo "f")
+
+            if [ "$SCHEMA_EXISTS" = "t" ]; then
+              echo "✅ Schema 'backtester' exists"
+
+              # Проверяем что есть таблицы
+              TABLE_COUNT=$(docker exec backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'backtester';" 2>/dev/null || echo "0")
+              echo "📊 Found $TABLE_COUNT tables in schema 'backtester'"
+            else
+              echo "❌ ERROR: Schema 'backtester' does not exist!"
+              echo "🔧 Attempting to restore from backup..."
+
+              # Пробуем восстановить из последнего хорошего бекапа
+              if [ -n "$LAST_GOOD_BACKUP" ] && [ -f "$LAST_GOOD_BACKUP" ]; then
+                echo "📦 Restoring from: $(basename $LAST_GOOD_BACKUP)"
+                gunzip -c "$LAST_GOOD_BACKUP" | docker exec -i backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester 2>&1 | tail -10
+
+                # Проверяем снова
+                SCHEMA_EXISTS=$(docker exec backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester -tAc "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'backtester');" 2>/dev/null || echo "f")
+
+                if [ "$SCHEMA_EXISTS" = "t" ]; then
+                  echo "✅ Schema restored successfully!"
+                else
+                  echo "❌ Restore failed. Trying to apply init-db.sql manually..."
+                  docker exec backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester -c "CREATE SCHEMA IF NOT EXISTS backtester AUTHORIZATION ${{ secrets.DB_USER }};"
+                  docker exec -i backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester < /opt/backtester/init-db.sql 2>&1 | tail -10
+                fi
+              else
+                echo "⚠️  No good backup found. Creating schema manually..."
+                docker exec backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester -c "CREATE SCHEMA IF NOT EXISTS backtester AUTHORIZATION ${{ secrets.DB_USER }};"
+                docker exec -i backtester_postgres_prod psql -U ${{ secrets.DB_USER }} -d backtester < /opt/backtester/init-db.sql 2>&1 | tail -10
+              fi
+            fi
+
+            # Устанавливаем Nginx конфигурацию (только если ещё не установлена)
+            if [ ! -f /etc/nginx/sites-enabled/backtester.conf ]; then
+              echo "Setting up Nginx configuration..."
+              sudo cp /opt/backtester/nginx/backtester.conf /etc/nginx/sites-available/backtester.conf
+              sudo ln -s /etc/nginx/sites-available/backtester.conf /etc/nginx/sites-enabled/
+
+              # Проверяем конфигурацию Nginx
+              sudo nginx -t
+
+              # Получаем SSL сертификат
+              sudo certbot --nginx -d ${{ secrets.DOMAIN }} --non-interactive --agree-tos -m ${{ secrets.LETSENCRYPT_EMAIL }}
+
+              # Перезагружаем Nginx
+              sudo systemctl reload nginx
+
+              echo "✅ Nginx configuration installed and SSL certificate obtained!"
+            else
+              echo "Nginx configuration already exists, reloading..."
+              sudo nginx -t && sudo systemctl reload nginx
+            fi
+
+            # Очищаем неиспользуемые образы
+            echo "🧹 Cleaning up unused images..."
+            docker system prune -f
+
+            # Проверяем статус сервисов
+            echo "📊 Checking services status..."
+            docker compose -f docker-compose.prod.yml ps
+
+            # Ждём немного для запуска healthcheck
+            echo "⏳ Waiting for healthcheck..."
+            sleep 10
+
+            # Проверяем здоровье контейнеров
+            echo "🏥 Container health status:"
+            docker inspect --format='{{.Name}}: {{.State.Health.Status}}' backtester_web_prod 2>/dev/null || echo "backtester_web_prod: no-healthcheck"
+            docker inspect --format='{{.Name}}: {{.State.Health.Status}}' market_analytics_prod 2>/dev/null || echo "market_analytics_prod: no-healthcheck"
+            docker inspect --format='{{.Name}}: {{.State.Status}}' backtester_telegram_bot_prod 2>/dev/null || echo "backtester_telegram_bot_prod: unknown"
+
+            # Показываем последние логи всех сервисов
+            echo "📝 Last 10 lines of each service logs:"
+            echo "--- Backtester Web ---"
+            docker compose -f docker-compose.prod.yml logs --tail=10 backtester-web
+            echo "--- Market Analytics ---"
+            docker compose -f docker-compose.prod.yml logs --tail=10 market-analytics
+            echo "--- Telegram Bot ---"
+            docker compose -f docker-compose.prod.yml logs --tail=10 telegram-bot
+
+            # Финальная проверка
+            RUNNING_COUNT=$(docker compose -f docker-compose.prod.yml ps | grep "Up" | wc -l)
+            echo "📊 Running containers: $RUNNING_COUNT"
+
+            if [ $RUNNING_COUNT -ge 3 ]; then
+              echo "✅ Deployment completed successfully!"
+              echo "🌐 Your application is available at: https://${{ secrets.DOMAIN }}"
+            else
+              echo "⚠️  Deployment completed but some containers may not be running properly"
+              exit 1
+            fi
