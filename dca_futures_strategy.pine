@@ -1,0 +1,446 @@
+//@version=5
+strategy("DCA Futures Strategy",
+         overlay=true,
+         pyramiding=20,
+         initial_capital=1000,
+         default_qty_type=strategy.fixed,
+         commission_type=strategy.commission.percent,
+         commission_value=0.04,
+         slippage=2)
+
+// ============================================================================
+// СПЕЦИФИКАЦИЯ
+// ============================================================================
+// Тип: DCA Futures Strategy
+// Платформа: TradingView
+// Язык: Pine Script v5
+// Режимы: Long / Short / Both
+// TP: один общий TP от средней цены позиции
+// SL: опционально, общий
+//
+// ВАЖНО:
+// - ❌ Нет TP на каждый ордер
+// - ✅ Один TP на всю позицию
+// - ✅ TP пересчитывается при каждом DCA
+// - ❌ Нет перезаходов до закрытия сделки
+// - ✅ Подходит под фьючерсных ботов
+//
+// ⚠️ STATUS: WORK IN PROGRESS - NOT READY FOR PRODUCTION
+// Last Updated: 2026-01-07
+// Known Issues:
+// - Требует TradingView Premium для контроля диапазона бэктеста
+// - Сложная логика SO (массив so_triggered) может иметь ошибки
+// - strategy.exit() вызывается на каждом баре (неэффективно)
+// - Обновление avg_price использует close вместо фактической цены исполнения
+// - Нет расчета ликвидации при использовании leverage
+// ============================================================================
+
+// ============================================================================
+// INPUTS - ОСНОВНЫЕ ПАРАМЕТРЫ
+// ============================================================================
+
+// --- Торговля ---
+direction = input.string("Long", "Direction", options=["Long", "Short", "Both"], group="Trading")
+use_leverage = input.bool(false, "Use Leverage", group="Trading")
+leverage = input.int(1, "Leverage", minval=1, maxval=125, group="Trading")
+max_deals = input.int(1, "Max Deals", minval=1, maxval=10, group="Trading")
+
+// --- Объём ---
+base_order_size = input.float(100, "Base Order Size", minval=1, group="Volume")
+safety_order_size = input.float(100, "Safety Order Size", minval=1, group="Volume")
+size_type = input.string("USDT", "Size Type", options=["USDT", "% Equity"], group="Volume")
+max_position_size = input.float(10000, "Max Position Size", minval=0, group="Volume")
+
+// --- DCA / Safety Orders ---
+max_safety_orders = input.int(5, "Max Safety Orders", minval=0, maxval=20, group="DCA")
+safety_order_step_percent = input.float(1.5, "Safety Order Step %", minval=0.1, step=0.1, group="DCA")
+safety_order_step_multiplier = input.float(1.0, "Step Multiplier (1.0 = Fixed)", minval=1.0, step=0.1, group="DCA")
+safety_order_volume_multiplier = input.float(1.0, "Volume Multiplier (1.0 = Fixed)", minval=1.0, step=0.1, group="DCA")
+
+// --- Take Profit / Stop Loss ---
+take_profit_percent = input.float(3.0, "Take Profit %", minval=0.1, step=0.1, group="TP/SL")
+use_stop_loss = input.bool(false, "Use Stop Loss", group="TP/SL")
+stop_loss_percent = input.float(10.0, "Stop Loss %", minval=0.1, step=0.1, group="TP/SL")
+
+// --- Индикаторы (фильтры входа) ---
+use_ema = input.bool(true, "Use EMA Filter", group="Indicators")
+ema_fast_period = input.int(50, "EMA Fast Period", minval=1, group="Indicators")
+ema_slow_period = input.int(200, "EMA Slow Period", minval=1, group="Indicators")
+
+use_rsi = input.bool(true, "Use RSI Filter", group="Indicators")
+rsi_period = input.int(14, "RSI Period", minval=1, group="Indicators")
+rsi_oversold = input.float(30, "RSI Oversold", minval=0, maxval=100, group="Indicators")
+rsi_overbought = input.float(70, "RSI Overbought", minval=0, maxval=100, group="Indicators")
+
+use_adx = input.bool(false, "Use ADX Filter", group="Indicators")
+adx_period = input.int(14, "ADX Period", minval=1, group="Indicators")
+adx_threshold = input.float(25, "ADX Threshold", minval=0, group="Indicators")
+
+// --- Risk Management ---
+use_max_drawdown = input.bool(false, "Use Max Drawdown", group="Risk Management")
+max_drawdown_percent = input.float(20, "Max Drawdown %", minval=1, group="Risk Management")
+use_max_duration = input.bool(false, "Use Max Duration", group="Risk Management")
+max_deal_duration = input.int(100, "Max Deal Duration (bars)", minval=1, group="Risk Management")
+
+// --- Визуализация ---
+show_avg_price = input.bool(true, "Show Avg Price", group="Visualization")
+show_tp_sl_lines = input.bool(true, "Show TP/SL Lines", group="Visualization")
+show_so_levels = input.bool(true, "Show SO Levels", group="Visualization")
+show_table = input.bool(true, "Show Info Table", group="Visualization")
+
+// ============================================================================
+// ИНДИКАТОРЫ - РАСЧЁТ
+// ============================================================================
+
+// EMA
+ema_fast = use_ema ? ta.ema(close, ema_fast_period) : na
+ema_slow = use_ema ? ta.ema(close, ema_slow_period) : na
+ema_trend_up = use_ema ? ema_fast > ema_slow : true
+ema_trend_down = use_ema ? ema_fast < ema_slow : true
+
+// RSI
+rsi = use_rsi ? ta.rsi(close, rsi_period) : na
+rsi_long_ok = use_rsi ? rsi < rsi_oversold : true
+rsi_short_ok = use_rsi ? rsi > rsi_overbought : true
+
+// ADX
+[di_plus, di_minus, adx_value] = ta.dmi(adx_period, adx_period)
+adx_trend_strong = use_adx ? (adx_value > adx_threshold) : true
+
+// ============================================================================
+// DCA ЛОГИКА - ОТСЛЕЖИВАНИЕ ПОЗИЦИИ
+// ============================================================================
+
+// Variables для отслеживания позиции
+var float avg_price = na
+var float total_quantity = 0.0
+var int safety_orders_count = 0
+var int base_order_bar = 0
+var float initial_capital_var = strategy.initial_capital
+var bool[] so_triggered = array.new_bool(21, false)  // Max 20 SO + 1
+
+// Функция расчёта объёма ордера
+get_order_quantity(order_size, is_base_order = true) =>
+    qty = if size_type == "USDT"
+        order_size / close
+    else
+        equity = strategy.equity
+        (equity * order_size / 100) / close
+
+    qty_final = use_leverage ? qty * leverage : qty
+    qty_final
+
+// Функция расчёта цены SO уровня
+get_so_price_level(so_num) =>
+    price_level = if not na(avg_price) and so_num > 0
+        // Рассчитываем шаг с учётом мультипликатора
+        var cumulative_step = 0.0
+        cumulative_step := 0.0
+
+        for i = 1 to so_num
+            step_for_level = safety_order_step_percent * math.pow(safety_order_step_multiplier, i - 1)
+            cumulative_step := cumulative_step + step_for_level
+
+        // Для LONG: SO ниже avg_price
+        // Для SHORT: SO выше avg_price
+        if strategy.position_size > 0
+            avg_price * (1 - cumulative_step / 100)
+        else if strategy.position_size < 0
+            avg_price * (1 + cumulative_step / 100)
+        else
+            na
+    else
+        na
+    price_level
+
+// Функция расчёта объёма SO
+get_so_volume(so_num) =>
+    volume = if so_num > 1
+        safety_order_size * math.pow(safety_order_volume_multiplier, so_num - 1)
+    else
+        safety_order_size
+    volume
+
+// Функция пересчёта средней цены
+update_avg_price(new_price, new_qty) =>
+    if na(avg_price) or total_quantity == 0
+        avg_price := new_price
+        total_quantity := new_qty
+    else
+        avg_price := (avg_price * total_quantity + new_price * new_qty) / (total_quantity + new_qty)
+        total_quantity := total_quantity + new_qty
+
+// Функция расчёта TP
+get_tp_price() =>
+    tp = if not na(avg_price)
+        if strategy.position_size > 0  // LONG
+            avg_price * (1 + take_profit_percent / 100)
+        else if strategy.position_size < 0  // SHORT
+            avg_price * (1 - take_profit_percent / 100)
+        else
+            na
+    else
+        na
+    tp
+
+// Функция расчёта SL
+get_sl_price() =>
+    sl = if use_stop_loss and not na(avg_price)
+        if strategy.position_size > 0  // LONG
+            avg_price * (1 - stop_loss_percent / 100)
+        else if strategy.position_size < 0  // SHORT
+            avg_price * (1 + stop_loss_percent / 100)
+        else
+            na
+    else
+        na
+    sl
+
+// ============================================================================
+// ENTRY LOGIC - УСЛОВИЯ ВХОДА
+// ============================================================================
+
+// Проверка что нет активной позиции
+no_position = strategy.position_size == 0
+
+// Условия входа в LONG
+long_entry_conditions = (direction == "Long" or direction == "Both") and
+                       no_position and
+                       ema_trend_up and
+                       rsi_long_ok and
+                       adx_trend_strong
+
+// Условия входа в SHORT
+short_entry_conditions = (direction == "Short" or direction == "Both") and
+                        no_position and
+                        ema_trend_down and
+                        rsi_short_ok and
+                        adx_trend_strong
+
+// Base Order Entry
+if long_entry_conditions
+    bo_qty = get_order_quantity(base_order_size, true)
+    strategy.entry("BO_Long", strategy.long, qty=bo_qty)
+
+    // Инициализация переменных
+    avg_price := close
+    total_quantity := bo_qty
+    safety_orders_count := 0
+    base_order_bar := bar_index
+    array.fill(so_triggered, false)
+
+if short_entry_conditions
+    bo_qty = get_order_quantity(base_order_size, true)
+    strategy.entry("BO_Short", strategy.short, qty=bo_qty)
+
+    // Инициализация переменных
+    avg_price := close
+    total_quantity := bo_qty
+    safety_orders_count := 0
+    base_order_bar := bar_index
+    array.fill(so_triggered, false)
+
+// ============================================================================
+// SAFETY ORDERS - DCA ОРДЕРА
+// ============================================================================
+
+// Проверяем SO только если есть открытая позиция
+if strategy.position_size != 0 and safety_orders_count < max_safety_orders
+
+    for so_num = 1 to max_safety_orders
+        // Проверяем что этот SO ещё не был triggered
+        if safety_orders_count < so_num and not array.get(so_triggered, so_num)
+
+            so_price = get_so_price_level(so_num)
+
+            // Проверяем достижение уровня SO
+            so_hit = false
+
+            if strategy.position_size > 0  // LONG
+                so_hit := low <= so_price
+            else if strategy.position_size < 0  // SHORT
+                so_hit := high >= so_price
+
+            if so_hit and not na(so_price)
+                // Размер SO с учётом volume multiplier
+                so_volume = get_so_volume(so_num)
+                so_qty = get_order_quantity(so_volume, false)
+
+                // Выставляем SO
+                if strategy.position_size > 0
+                    strategy.entry("SO_" + str.tostring(so_num), strategy.long, qty=so_qty)
+                else
+                    strategy.entry("SO_" + str.tostring(so_num), strategy.short, qty=so_qty)
+
+                // Обновляем среднюю цену
+                update_avg_price(close, so_qty)
+
+                // Увеличиваем счётчик SO
+                safety_orders_count := safety_orders_count + 1
+                array.set(so_triggered, so_num, true)
+
+// ============================================================================
+// EXIT LOGIC - ЕДИНЫЙ TP/SL
+// ============================================================================
+
+tp_price = get_tp_price()
+sl_price = get_sl_price()
+
+// Exit по TP/SL для LONG
+if strategy.position_size > 0
+    if not na(tp_price) and not na(sl_price)
+        strategy.exit("TP/SL_Long", from_entry="BO_Long", limit=tp_price, stop=sl_price)
+
+        // Exit для всех SO
+        for so_num = 1 to max_safety_orders
+            if array.get(so_triggered, so_num)
+                strategy.exit("TP/SL_SO" + str.tostring(so_num), from_entry="SO_" + str.tostring(so_num), limit=tp_price, stop=sl_price)
+    else if not na(tp_price)
+        strategy.exit("TP_Long", from_entry="BO_Long", limit=tp_price)
+
+        for so_num = 1 to max_safety_orders
+            if array.get(so_triggered, so_num)
+                strategy.exit("TP_SO" + str.tostring(so_num), from_entry="SO_" + str.tostring(so_num), limit=tp_price)
+
+// Exit по TP/SL для SHORT
+if strategy.position_size < 0
+    if not na(tp_price) and not na(sl_price)
+        strategy.exit("TP/SL_Short", from_entry="BO_Short", limit=tp_price, stop=sl_price)
+
+        for so_num = 1 to max_safety_orders
+            if array.get(so_triggered, so_num)
+                strategy.exit("TP/SL_SO" + str.tostring(so_num), from_entry="SO_" + str.tostring(so_num), limit=tp_price, stop=sl_price)
+    else if not na(tp_price)
+        strategy.exit("TP_Short", from_entry="BO_Short", limit=tp_price)
+
+        for so_num = 1 to max_safety_orders
+            if array.get(so_triggered, so_num)
+                strategy.exit("TP_SO" + str.tostring(so_num), from_entry="SO_" + str.tostring(so_num), limit=tp_price)
+
+// ============================================================================
+// RISK MANAGEMENT
+// ============================================================================
+
+// Max Drawdown check
+if use_max_drawdown and strategy.position_size != 0 and not na(avg_price)
+    current_pnl_percent = 0.0
+
+    if strategy.position_size > 0  // LONG
+        current_pnl_percent := ((close - avg_price) / avg_price) * 100
+    else  // SHORT
+        current_pnl_percent := ((avg_price - close) / avg_price) * 100
+
+    if current_pnl_percent <= -max_drawdown_percent
+        strategy.close_all(comment="Max DD Reached")
+        // Сброс переменных
+        avg_price := na
+        total_quantity := 0.0
+        safety_orders_count := 0
+        array.fill(so_triggered, false)
+
+// Max Duration check
+if use_max_duration and strategy.position_size != 0 and not na(base_order_bar)
+    bars_in_trade = bar_index - base_order_bar
+
+    if bars_in_trade >= max_deal_duration
+        strategy.close_all(comment="Max Duration")
+        // Сброс переменных
+        avg_price := na
+        total_quantity := 0.0
+        safety_orders_count := 0
+        array.fill(so_triggered, false)
+
+// Сброс переменных при закрытии позиции
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    avg_price := na
+    total_quantity := 0.0
+    safety_orders_count := 0
+    array.fill(so_triggered, false)
+
+// ============================================================================
+// ВИЗУАЛИЗАЦИЯ
+// ============================================================================
+
+// Plots - Avg Price, TP, SL
+plot(show_avg_price and not na(avg_price) ? avg_price : na,
+     title="Avg Price",
+     color=color.blue,
+     linewidth=2,
+     style=plot.style_line)
+
+plot(show_tp_sl_lines and not na(tp_price) ? tp_price : na,
+     title="TP",
+     color=color.green,
+     linewidth=1,
+     style=plot.style_line)
+
+plot(show_tp_sl_lines and not na(sl_price) ? sl_price : na,
+     title="SL",
+     color=color.red,
+     linewidth=1,
+     style=plot.style_line)
+
+// Plots - SO Levels (первые 5)
+plot(show_so_levels and safety_orders_count < 1 ? get_so_price_level(1) : na,
+     title="SO 1",
+     color=color.gray,
+     linewidth=1,
+     style=plot.style_circles)
+
+plot(show_so_levels and safety_orders_count < 2 ? get_so_price_level(2) : na,
+     title="SO 2",
+     color=color.gray,
+     linewidth=1,
+     style=plot.style_circles)
+
+plot(show_so_levels and safety_orders_count < 3 ? get_so_price_level(3) : na,
+     title="SO 3",
+     color=color.gray,
+     linewidth=1,
+     style=plot.style_circles)
+
+// Info Table
+if show_table
+    var table info_table = table.new(position.top_right, 2, 6,
+                                      border_width=1,
+                                      border_color=color.gray,
+                                      frame_width=1,
+                                      frame_color=color.gray)
+
+    // Headers
+    if barstate.isfirst
+        table.cell(info_table, 0, 0, "Metric", bgcolor=color.gray, text_color=color.white)
+        table.cell(info_table, 1, 0, "Value", bgcolor=color.gray, text_color=color.white)
+
+    // Data
+    if barstate.islast
+        table.cell(info_table, 0, 1, "Position Size", text_halign=text.align_left)
+        table.cell(info_table, 1, 1, str.tostring(math.abs(strategy.position_size), "#.####"), text_halign=text.align_right)
+
+        table.cell(info_table, 0, 2, "Avg Price", text_halign=text.align_left)
+        table.cell(info_table, 1, 2, not na(avg_price) ? str.tostring(avg_price, "#.####") : "-", text_halign=text.align_right)
+
+        table.cell(info_table, 0, 3, "Safety Orders", text_halign=text.align_left)
+        table.cell(info_table, 1, 3, str.tostring(safety_orders_count) + "/" + str.tostring(max_safety_orders), text_halign=text.align_right)
+
+        // Current PnL
+        current_pnl_pct = 0.0
+        if strategy.position_size > 0 and not na(avg_price)
+            current_pnl_pct := ((close - avg_price) / avg_price) * 100
+        else if strategy.position_size < 0 and not na(avg_price)
+            current_pnl_pct := ((avg_price - close) / avg_price) * 100
+
+        pnl_color = current_pnl_pct > 0 ? color.green : current_pnl_pct < 0 ? color.red : color.gray
+
+        table.cell(info_table, 0, 4, "Current PnL %", text_halign=text.align_left)
+        table.cell(info_table, 1, 4, str.tostring(current_pnl_pct, "#.##") + "%",
+                   text_halign=text.align_right, text_color=pnl_color)
+
+        table.cell(info_table, 0, 5, "Total Return", text_halign=text.align_left)
+        total_return = ((strategy.equity - strategy.initial_capital) / strategy.initial_capital) * 100
+        return_color = total_return > 0 ? color.green : total_return < 0 ? color.red : color.gray
+        table.cell(info_table, 1, 5, str.tostring(total_return, "#.##") + "%",
+                   text_halign=text.align_right, text_color=return_color)
+
+// Labels для входов (опционально - может быть слишком много)
+// Можно добавить при необходимости

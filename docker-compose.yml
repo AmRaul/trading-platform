@@ -1,0 +1,162 @@
+services:
+  # PostgreSQL - Main Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: backtester_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: backtester
+      POSTGRES_USER: ${DB_USER:-backtester}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - backtester_network
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          pg_isready -U ${DB_USER:-backtester} && \
+          psql -U ${DB_USER:-backtester} -d backtester -tAc "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'backtester');" | grep -q 't'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis - Caching Layer
+  redis:
+    image: redis:7-alpine
+    container_name: backtester_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD:-redis123}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Backtester Web - Flask Application
+  backtester-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: backtester_web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./results:/app/results
+      - ./templates:/app/templates
+      - ./web_app.py:/app/web_app.py
+      - ./database.py:/app/database.py
+      - ./strategy.py:/app/strategy.py
+      - ./backtester.py:/app/backtester.py
+      - ./data_loader.py:/app/data_loader.py
+      - ./visualizer.py:/app/visualizer.py
+      - ./indicators.py:/app/indicators.py
+      - ./reporter.py:/app/reporter.py
+      - ./main.py:/app/main.py
+      - ./optimizer.py:/app/optimizer.py
+      - ./optimization_queue.py:/app/optimization_queue.py
+      - ./optimization_config_example.json:/app/optimization_config_example.json
+      - ./optimization_config_with_indicators.json:/app/optimization_config_with_indicators.json
+      - ./optimization_config_no_indicators.json:/app/optimization_config_no_indicators.json
+      - ./test_manual_indicators.py:/app/test_manual_indicators.py
+      - ./test_indicators_dual_timeframe.py:/app/test_indicators_dual_timeframe.py
+      - ./dual_timeframe_with_indicators.json:/app/dual_timeframe_with_indicators.json
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      - ANALYTICS_API_URL=http://market-analytics:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Market Analytics - FastAPI Service
+  market-analytics:
+    build:
+      context: ./market-analytics
+      dockerfile: Dockerfile
+    container_name: market_analytics
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./market-analytics:/app
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/1
+      - LOG_LEVEL=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Telegram Bot - Notifications & Commands
+  telegram-bot:
+    build:
+      context: ./market-analytics
+      dockerfile: bot/Dockerfile
+    container_name: backtester_telegram_bot
+    restart: unless-stopped
+    volumes:
+      - ./market-analytics/bot:/app/bot
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ANALYTICS_API_URL=http://market-analytics:8001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=backtester
+      - DB_USER=${DB_USER:-backtester}
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis123}@redis:6379/2
+    depends_on:
+      - market-analytics
+      - postgres
+      - redis
+    networks:
+      - backtester_network
+
+networks:
+  backtester_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data: 

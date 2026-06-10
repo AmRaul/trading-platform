@@ -1,0 +1,56 @@
+# Traefik Static Configuration
+# https://doc.traefik.io/traefik/
+
+# API and Dashboard
+api:
+  dashboard: true
+  insecure: false  # Dashboard доступен только через HTTPS
+
+# Entry Points
+entryPoints:
+  # HTTP
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  # HTTPS
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+
+# Certificate Resolvers (Let's Encrypt)
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: ${LETSENCRYPT_EMAIL}
+      storage: /letsencrypt/acme.json
+      # Production Let's Encrypt server
+      # caServer: https://acme-v02.api.letsencrypt.org/directory
+      # Для тестирования используйте staging:
+      # caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+      httpChallenge:
+        entryPoint: web
+
+# Docker Provider
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false  # Только контейнеры с label traefik.enable=true
+    network: traefik_network
+
+# Logs
+log:
+  level: INFO
+  format: common
+
+# Access Logs
+accessLog:
+  format: common
+  bufferingSize: 100

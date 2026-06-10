@@ -1,0 +1,47 @@
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
+    volumes:
+      # Docker socket для автоматического обнаружения контейнеров
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Конфигурация Traefik
+      - ./traefik/traefik.yml:/traefik.yml:ro
+      # Хранилище SSL сертификатов Let's Encrypt
+      - ./traefik/letsencrypt:/letsencrypt
+    networks:
+      - traefik_network
+    labels:
+      # Включить Traefik для самого себя
+      - "traefik.enable=true"
+
+      # Dashboard (опционально, можно закомментировать для безопасности)
+      # Доступ к dashboard через https://backtester.hub-cargo.ru/dashboard/
+      - "traefik.http.routers.traefik-dashboard.rule=Host(`${DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/dashboard`))"
+      - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik-dashboard.service=api@internal"
+
+      # Basic Auth для dashboard (опционально)
+      # Генерируется командой: echo $(htpasswd -nb admin yourpassword) | sed -e s/\\$/\\$\\$/g
+      # - "traefik.http.routers.traefik-dashboard.middlewares=dashboard-auth"
+      # - "traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$$apr1$$..."
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  traefik_network:
+    name: traefik_network
+    driver: bridge

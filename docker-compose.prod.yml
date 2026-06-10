@@ -1,0 +1,141 @@
+services:
+  # PostgreSQL - Main Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: backtester_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: backtester
+      POSTGRES_USER: ${DB_USER:-backtester}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    expose:
+      - "5432"
+    networks:
+      - backtester_network
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          pg_isready -U ${DB_USER:-backtester} && \
+          psql -U ${DB_USER:-backtester} -d backtester -tAc "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'backtester');" | grep -q 't'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis - Caching Layer
+  redis:
+    image: redis:7-alpine
+    container_name: backtester_redis_prod
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Backtester Web - Flask Application
+  backtester-web:
+    image: ghcr.io/${GITHUB_REPOSITORY:-username/backtester}-web:latest
+    container_name: backtester_web_prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./results:/app/results
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+      - ANALYTICS_API_URL=http://market-analytics:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Market Analytics - FastAPI Service
+  market-analytics:
+    image: ghcr.io/${GITHUB_REPOSITORY:-username/backtester}-analytics:latest
+    container_name: market_analytics_prod
+    restart: unless-stopped
+    expose:
+      - "8001"
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/1
+      - LOG_LEVEL=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backtester_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Telegram Bot - Notifications & Commands
+  telegram-bot:
+    image: ghcr.io/${GITHUB_REPOSITORY:-username/backtester}-bot:latest
+    container_name: backtester_telegram_bot_prod
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ANALYTICS_API_URL=http://market-analytics:8001
+      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/2
+      - DB_USER=${DB_USER:-backtester}
+      - DB_PASSWORD=${DB_PASSWORD:-changeme}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=backtester
+    depends_on:
+      - market-analytics
+      - postgres
+      - redis
+    networks:
+      - backtester_network
+
+networks:
+  backtester_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local

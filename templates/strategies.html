@@ -1,0 +1,839 @@
+{% extends "base.html" %}
+
+{% block title %}Управление стратегиями - Crypto Backtester{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                        <h4 class="mb-0">
+                            <i class="fas fa-bookmark me-2 text-primary"></i>
+                            Управление стратегиями
+                        </h4>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-info" onclick="loadExampleConfigs()">
+                                <i class="fas fa-download me-1"></i>Загрузить примеры
+                            </button>
+                            <button class="btn btn-success" onclick="showCreateStrategyModal()">
+                                <i class="fas fa-plus me-1"></i>Создать новую
+                            </button>
+                            <button class="btn btn-outline-primary" onclick="showSaveConfigModal()">
+                                <i class="fas fa-save me-1"></i>Сохранить текущую
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            <div class="card-body">
+                <!-- Фильтры и поиск -->
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" id="searchConfigs" placeholder="Поиск по названию...">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select" id="filterTags">
+                            <option value="">Все теги</option>
+                            <option value="conservative">Консервативные</option>
+                            <option value="aggressive">Агрессивные</option>
+                            <option value="martingale">Мартингейл</option>
+                            <option value="dca">DCA</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select" id="sortBy">
+                            <option value="updated_at">По дате обновления</option>
+                            <option value="name">По названию</option>
+                            <option value="performance_score">По производительности</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-outline-primary w-100" onclick="loadConfigs()">
+                            <i class="fas fa-sync me-1"></i>Обновить
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Список конфигураций -->
+                <div id="configsList">
+                    <div class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x text-muted"></i>
+                        <p class="text-muted mt-2">Загрузка конфигураций...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+</div>
+
+<!-- Модальное окно для сохранения конфигурации -->
+<div class="modal fade" id="saveConfigModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-save me-2"></i>
+                    Сохранить конфигурацию
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="saveConfigForm">
+                    <div class="mb-3">
+                        <label for="configName" class="form-label">Название *</label>
+                        <input type="text" class="form-control" id="configName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="configDescription" class="form-label">Описание</label>
+                        <textarea class="form-control" id="configDescription" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="configTags" class="form-label">Теги (через запятую)</label>
+                        <input type="text" class="form-control" id="configTags" placeholder="conservative, dca, long">
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="configPublic">
+                        <label class="form-check-label" for="configPublic">
+                            Публичная конфигурация
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="saveCurrentConfig()">
+                    <i class="fas fa-save me-1"></i>Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для редактирования конфигурации -->
+<div class="modal fade" id="editConfigModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>
+                    Редактировать конфигурацию
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editConfigForm">
+                    <input type="hidden" id="editConfigId">
+                    <div class="mb-3">
+                        <label for="editConfigName" class="form-label">Название *</label>
+                        <input type="text" class="form-control" id="editConfigName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editConfigDescription" class="form-label">Описание</label>
+                        <textarea class="form-control" id="editConfigDescription" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editConfigTags" class="form-label">Теги (через запятую)</label>
+                        <input type="text" class="form-control" id="editConfigTags">
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="editConfigPublic">
+                        <label class="form-check-label" for="editConfigPublic">
+                            Публичная конфигурация
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="updateConfig()">
+                    <i class="fas fa-save me-1"></i>Сохранить изменения
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для создания новой стратегии -->
+<div class="modal fade" id="createStrategyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-plus me-2"></i>
+                    Создать новую стратегию
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="createStrategyForm">
+                    <!-- Основная информация -->
+                    <h6 class="text-primary mb-3">Основная информация</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyName" class="form-label">Название стратегии *</label>
+                                <input type="text" class="form-control" id="newStrategyName" required placeholder="Например: Консервативный DCA">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyTags" class="form-label">Теги (через запятую)</label>
+                                <input type="text" class="form-control" id="newStrategyTags" placeholder="conservative, dca, long">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="newStrategyDescription" class="form-label">Описание</label>
+                        <textarea class="form-control" id="newStrategyDescription" rows="2" placeholder="Опишите вашу стратегию..."></textarea>
+                    </div>
+
+                    <hr>
+
+                    <!-- Параметры стратегии -->
+                    <h6 class="text-primary mb-3">Параметры стратегии</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyBalance" class="form-label">Начальный баланс (USDT)</label>
+                                <input type="number" class="form-control" id="newStrategyBalance" value="1000" min="10">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyLeverage" class="form-label">Плечо</label>
+                                <input type="number" class="form-control" id="newStrategyLeverage" value="1" min="1" max="125">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyOrderType" class="form-label">Тип ордеров</label>
+                                <select class="form-select" id="newStrategyOrderType">
+                                    <option value="long">Long (покупка)</option>
+                                    <option value="short">Short (продажа)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyFirstOrder" class="form-label">Первый ордер (%)</label>
+                                <input type="number" class="form-control" id="newStrategyFirstOrder" value="10" min="1" max="100" step="0.1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- DCA настройки -->
+                    <h6 class="text-primary mb-3">Усреднение (DCA)</h6>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="newStrategyDcaEnabled" checked>
+                        <label class="form-check-label" for="newStrategyDcaEnabled">
+                            Включить DCA
+                        </label>
+                    </div>
+
+                    <div id="newStrategyDcaParams">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="newStrategyMaxOrders" class="form-label">Макс. ордеров (ДШЦ)</label>
+                                    <input type="number" class="form-control" id="newStrategyMaxOrders" value="5" min="1" max="20">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="newStrategyStepPercent" class="form-label">Шаг цены (%)</label>
+                                    <input type="number" class="form-control" id="newStrategyStepPercent" value="1.5" min="0.1" step="0.1">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="newStrategyMultiplier" class="form-label">Мартингейл (x)</label>
+                                    <input type="number" class="form-control" id="newStrategyMultiplier" value="2.0" min="1" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Take Profit & Stop Loss -->
+                    <h6 class="text-primary mb-3">Закрытие позиции</h6>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategyTP" class="form-label">Take Profit (%)</label>
+                                <input type="number" class="form-control" id="newStrategyTP" value="5" min="0.1" step="0.1">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="newStrategySL" class="form-label">Stop Loss (%)</label>
+                                <input type="number" class="form-control" id="newStrategySL" value="10" min="0.1" step="0.1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="newStrategyPublic">
+                        <label class="form-check-label" for="newStrategyPublic">
+                            Публичная стратегия (доступна другим пользователям)
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-success" onclick="createNewStrategy()">
+                    <i class="fas fa-save me-1"></i>Создать стратегию
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentConfigs = [];
+
+// Загрузка примеров конфигураций
+async function loadExampleConfigs() {
+    if (!confirm('Загрузить примеры конфигураций из config_examples.json?\n\nБудут добавлены готовые стратегии с индикаторами (EMA+RSI, Bollinger Bands и др.)')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/load-example-configs', {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(`✅ ${data.message}`, 'success');
+            // Перезагружаем список конфигураций
+            loadConfigs();
+        } else {
+            showNotification(`Ошибка: ${data.error}`, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка загрузки примеров: ${error.message}`, 'error');
+    }
+}
+
+// Загрузка конфигураций
+async function loadConfigs() {
+    try {
+        const response = await fetch('/api/configs');
+        const data = await response.json();
+
+        // Проверяем, что получили массив
+        if (!Array.isArray(data)) {
+            console.error('Ожидался массив, получено:', data);
+            throw new Error(data.error || 'Неверный формат данных');
+        }
+
+        currentConfigs = data;
+        renderConfigs(data);
+    } catch (error) {
+        showNotification(`Ошибка загрузки: ${error.message}`, 'error');
+        document.getElementById('configsList').innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-exclamation-triangle fa-3x text-danger mb-3"></i>
+                <h5 class="text-danger">Ошибка загрузки конфигураций</h5>
+                <p class="text-muted">${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+// Отображение конфигураций
+function renderConfigs(configs) {
+    const container = document.getElementById('configsList');
+    
+    if (configs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-folder-open fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">Нет сохраненных конфигураций</h5>
+                <p class="text-muted">Сохраните свою первую стратегию, чтобы начать работу</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = configs.map(config => `
+        <div class="card mb-3 config-item" data-id="${config.id}">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <h6 class="card-title mb-1">
+                            ${config.name}
+                            ${config.is_public ? '<span class="badge bg-success ms-2">Публичная</span>' : ''}
+                        </h6>
+                        <p class="card-text text-muted small mb-2">${config.description || 'Без описания'}</p>
+                        <div class="small text-muted">
+                            <i class="fas fa-user me-1"></i>${config.author}
+                            <i class="fas fa-clock ms-3 me-1"></i>${new Date(config.updated_at).toLocaleDateString()}
+                            ${config.tags ? `<i class="fas fa-tags ms-3 me-1"></i>${config.tags}` : ''}
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <div class="h5 mb-0 ${config.performance_score > 0 ? 'text-success' : 'text-muted'}">
+                                ${config.performance_score > 0 ? `+${config.performance_score.toFixed(1)}%` : 'N/A'}
+                            </div>
+                            <small class="text-muted">Производительность</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-outline-primary btn-sm" onclick="loadConfig(${config.id})">
+                                <i class="fas fa-play me-1"></i>Загрузить
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="editConfig(${config.id})">
+                                <i class="fas fa-edit me-1"></i>Изменить
+                            </button>
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+                                    <i class="fas fa-ellipsis-v"></i>
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="#" onclick="duplicateConfig(${config.id})">
+                                        <i class="fas fa-copy me-2"></i>Дублировать
+                                    </a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item text-danger" href="#" onclick="deleteConfig(${config.id})">
+                                        <i class="fas fa-trash me-2"></i>Удалить
+                                    </a></li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Загрузка конфигурации в форму
+async function loadConfig(configId) {
+    try {
+        const response = await fetch(`/api/configs/${configId}`);
+        const config = await response.json();
+        
+        // Парсим JSON конфигурации
+        const configData = JSON.parse(config.config_json);
+        
+        // Заполняем форму на странице конфигурации
+        if (window.parent && window.parent.loadConfigToForm) {
+            window.parent.loadConfigToForm(configData);
+            window.parent.location.href = '/config';
+        } else {
+            // Если мы на той же странице, переходим к конфигурации
+            window.location.href = `/config?load=${configId}`;
+        }
+        
+        showNotification(`Конфигурация "${config.name}" загружена`, 'success');
+    } catch (error) {
+        showNotification(`Ошибка загрузки: ${error.message}`, 'error');
+    }
+}
+
+// Показать модальное окно создания новой стратегии
+function showCreateStrategyModal() {
+    const modal = new bootstrap.Modal(document.getElementById('createStrategyModal'));
+    modal.show();
+}
+
+// Создание новой стратегии
+async function createNewStrategy() {
+    const name = document.getElementById('newStrategyName').value;
+    const description = document.getElementById('newStrategyDescription').value;
+    const tags = document.getElementById('newStrategyTags').value;
+    const isPublic = document.getElementById('newStrategyPublic').checked;
+
+    // Получаем параметры стратегии
+    const startBalance = parseFloat(document.getElementById('newStrategyBalance').value) || 1000;
+    const leverage = parseInt(document.getElementById('newStrategyLeverage').value) || 1;
+    const orderType = document.getElementById('newStrategyOrderType').value;
+    const firstOrderPercent = parseFloat(document.getElementById('newStrategyFirstOrder').value) || 10;
+
+    const dcaEnabled = document.getElementById('newStrategyDcaEnabled').checked;
+    const maxOrders = parseInt(document.getElementById('newStrategyMaxOrders').value) || 5;
+    const stepPercent = parseFloat(document.getElementById('newStrategyStepPercent').value) || 1.5;
+    const multiplier = parseFloat(document.getElementById('newStrategyMultiplier').value) || 2.0;
+
+    const tpPercent = parseFloat(document.getElementById('newStrategyTP').value) || 5;
+    const slPercent = parseFloat(document.getElementById('newStrategySL').value) || 10;
+
+    if (!name.trim()) {
+        showNotification('Введите название стратегии', 'error');
+        return;
+    }
+
+    try {
+        // Конфигурация стратегии с указанными параметрами
+        const baseConfig = {
+            start_balance: startBalance,
+            leverage: leverage,
+            order_type: orderType,
+            first_order: {
+                amount_percent: firstOrderPercent,
+                amount_fixed: null,
+                risk_percent: null
+            },
+            dca: {
+                enabled: dcaEnabled,
+                max_orders: maxOrders,
+                martingale: {
+                    enabled: multiplier > 1,
+                    multiplier: multiplier,
+                    progression: 'exponential'
+                },
+                step_price: {
+                    type: 'fixed_percent',
+                    value: stepPercent,
+                    dynamic_multiplier: 1.0,
+                    atr_multiplier: null
+                }
+            },
+            take_profit: {
+                enabled: true,
+                percent: tpPercent,
+                trailing: {
+                    enabled: false,
+                    activation_percent: 3,
+                    trail_percent: 1
+                }
+            },
+            stop_loss: {
+                enabled: true,
+                percent: slPercent,
+                trailing: {
+                    enabled: false,
+                    activation_percent: 2,
+                    trail_percent: 0.5
+                }
+            },
+            risk_management: {
+                max_drawdown_percent: 20,
+                max_open_positions: 1,
+                daily_loss_limit: null
+            }
+        };
+
+        const response = await fetch('/api/configs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: name,
+                description: description,
+                config: baseConfig,
+                tags: tags,
+                is_public: isPublic,
+                author: 'user'
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showNotification(`Стратегия "${name}" создана!`, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('createStrategyModal')).hide();
+
+            // Переходим на страницу конфигурации для настройки параметров
+            setTimeout(() => {
+                window.location.href = `/config?strategy_id=${result.id}`;
+            }, 1000);
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка создания: ${error.message}`, 'error');
+    }
+}
+
+// Показать модальное окно сохранения
+function showSaveConfigModal() {
+    const modal = new bootstrap.Modal(document.getElementById('saveConfigModal'));
+    modal.show();
+}
+
+// Сохранение текущей конфигурации
+async function saveCurrentConfig() {
+    const name = document.getElementById('configName').value;
+    const description = document.getElementById('configDescription').value;
+    const tags = document.getElementById('configTags').value;
+    const isPublic = document.getElementById('configPublic').checked;
+    
+    if (!name.trim()) {
+        showNotification('Введите название конфигурации', 'error');
+        return;
+    }
+    
+    try {
+        // Получаем текущую конфигурацию из формы (если доступна)
+        const currentConfig = getCurrentFormConfig();
+        
+        const response = await fetch('/api/configs', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: name,
+                description: description,
+                config: currentConfig,
+                tags: tags,
+                is_public: isPublic,
+                author: 'user'
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification(result.message, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('saveConfigModal')).hide();
+            loadConfigs();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка сохранения: ${error.message}`, 'error');
+    }
+}
+
+// Получение текущей конфигурации из формы
+function getCurrentFormConfig() {
+    // Эта функция должна быть реализована на странице конфигурации
+    // Пока возвращаем базовую конфигурацию
+    return {
+        start_balance: 1000,
+        leverage: 1,
+        order_type: 'long',
+        entry_conditions: {
+            type: 'immediate',
+            trigger: null,
+            percent: null
+        },
+        first_order: {
+            amount_percent: 10,
+            amount_fixed: null,
+            risk_percent: null
+        },
+        dca: {
+            enabled: true,
+            max_orders: 5,
+            martingale: {
+                enabled: true,
+                multiplier: 2.0,
+                progression: 'exponential'
+            },
+            step_price: {
+                type: 'fixed_percent',
+                value: 1.5,
+                dynamic_multiplier: 1.0,
+                atr_multiplier: null
+            }
+        },
+        take_profit: {
+            enabled: true,
+            percent: 5,
+            trailing: {
+                enabled: false,
+                activation_percent: 3,
+                trail_percent: 1
+            }
+        },
+        stop_loss: {
+            enabled: true,
+            percent: 10,
+            trailing: {
+                enabled: false,
+                activation_percent: 2,
+                trail_percent: 0.5
+            }
+        },
+        risk_management: {
+            max_drawdown_percent: 20,
+            max_open_positions: 1,
+            daily_loss_limit: null
+        }
+    };
+}
+
+// Редактирование конфигурации
+async function editConfig(configId) {
+    try {
+        const response = await fetch(`/api/configs/${configId}`);
+        const config = await response.json();
+        
+        document.getElementById('editConfigId').value = config.id;
+        document.getElementById('editConfigName').value = config.name;
+        document.getElementById('editConfigDescription').value = config.description || '';
+        document.getElementById('editConfigTags').value = config.tags || '';
+        document.getElementById('editConfigPublic').checked = config.is_public;
+        
+        const modal = new bootstrap.Modal(document.getElementById('editConfigModal'));
+        modal.show();
+    } catch (error) {
+        showNotification(`Ошибка загрузки: ${error.message}`, 'error');
+    }
+}
+
+// Обновление конфигурации
+async function updateConfig() {
+    const configId = document.getElementById('editConfigId').value;
+    const name = document.getElementById('editConfigName').value;
+    const description = document.getElementById('editConfigDescription').value;
+    const tags = document.getElementById('editConfigTags').value;
+    const isPublic = document.getElementById('editConfigPublic').checked;
+    
+    try {
+        const response = await fetch(`/api/configs/${configId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: name,
+                description: description,
+                tags: tags,
+                is_public: isPublic,
+                config: getCurrentFormConfig() // В реальном приложении нужно получить актуальную конфигурацию
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification(result.message, 'success');
+            bootstrap.Modal.getInstance(document.getElementById('editConfigModal')).hide();
+            loadConfigs();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка обновления: ${error.message}`, 'error');
+    }
+}
+
+// Дублирование конфигурации
+async function duplicateConfig(configId) {
+    if (!confirm('Создать копию этой конфигурации?')) return;
+    
+    try {
+        const response = await fetch(`/api/configs/${configId}/duplicate`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification(result.message, 'success');
+            loadConfigs();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка дублирования: ${error.message}`, 'error');
+    }
+}
+
+// Удаление конфигурации
+async function deleteConfig(configId) {
+    if (!confirm('Удалить эту конфигурацию? Это действие нельзя отменить.')) return;
+    
+    try {
+        const response = await fetch(`/api/configs/${configId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification(result.message, 'success');
+            loadConfigs();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification(`Ошибка удаления: ${error.message}`, 'error');
+    }
+}
+
+// Показ уведомлений
+function showNotification(message, type = 'info') {
+    const alertClass = {
+        'success': 'alert-success',
+        'error': 'alert-danger',
+        'warning': 'alert-warning',
+        'info': 'alert-info'
+    }[type] || 'alert-info';
+    
+    const notification = document.createElement('div');
+    notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+    notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+    notification.innerHTML = `
+        ${message}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.remove();
+    }, 5000);
+}
+
+// Переключение параметров DCA
+document.addEventListener('DOMContentLoaded', function() {
+    const dcaEnabledCheckbox = document.getElementById('newStrategyDcaEnabled');
+    const dcaParamsDiv = document.getElementById('newStrategyDcaParams');
+
+    if (dcaEnabledCheckbox) {
+        dcaEnabledCheckbox.addEventListener('change', function() {
+            dcaParamsDiv.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+});
+
+// Инициализация при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    loadConfigs();
+    
+    // Поиск
+    document.getElementById('searchConfigs').addEventListener('input', function() {
+        const searchTerm = this.value.toLowerCase();
+        const filtered = currentConfigs.filter(config => 
+            config.name.toLowerCase().includes(searchTerm) ||
+            (config.description && config.description.toLowerCase().includes(searchTerm))
+        );
+        renderConfigs(filtered);
+    });
+    
+    // Фильтр по тегам
+    document.getElementById('filterTags').addEventListener('change', function() {
+        const tag = this.value;
+        if (!tag) {
+            renderConfigs(currentConfigs);
+        } else {
+            const filtered = currentConfigs.filter(config => 
+                config.tags && config.tags.toLowerCase().includes(tag)
+            );
+            renderConfigs(filtered);
+        }
+    });
+});
+</script>
+{% endblock %}

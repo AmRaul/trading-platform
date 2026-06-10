@@ -1,0 +1,68 @@
+{
+  "start_balance": 10000,
+  "leverage": 1,
+  "order_type": "long",
+  "timeframe": "15m",
+  "commission_rate": 0.0004,
+
+  "entry_conditions": {
+    "trigger_type": "indicator"
+  },
+
+  "first_order": {
+    "type": "percent",
+    "percent_of_balance": 10
+  },
+
+  "dca": {
+    "enabled": false
+  },
+
+  "take_profit": {
+    "enabled": true,
+    "target_percent": 3.0,
+    "trailing": false
+  },
+
+  "stop_loss": {
+    "enabled": true,
+    "stop_percent": 2.0,
+    "trailing": false
+  },
+
+  "risk_management": {
+    "max_drawdown_percent": 20,
+    "max_position_size_percent": 100
+  },
+
+  "indicators": {
+    "enabled": true,
+    "strategy_type": "custom",
+    "custom": {
+      "selected_indicators": {
+        "ema": true,
+        "rsi": true,
+        "adx": true
+      },
+      "ema": {
+        "use_price_comparison": true,
+        "period": 200
+      },
+      "rsi": {
+        "period": 14,
+        "use_crossover": true,
+        "crossover_level_long": 38,
+        "crossover_level_short": 62
+      },
+      "adx": {
+        "period": 14,
+        "max_value": 25
+      }
+    }
+  },
+
+  "data_source": {
+    "type": "csv",
+    "file_path": "data/BTCUSDT_15m_20260104_073137.csv"
+  }
+}

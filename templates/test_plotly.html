@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Plotly</title>
+    <script src="https://cdn.plot.ly/plotly-3.3.0.min.js"></script>
+</head>
+<body>
+    <h1>Test Plotly Loading</h1>
+    <div id="status">Загрузка...</div>
+    <div id="chart" style="width:100%;height:600px;"></div>
+
+    <script>
+        // Проверяем загрузку Plotly
+        function checkPlotly() {
+            const status = document.getElementById('status');
+
+            if (typeof Plotly !== 'undefined') {
+                status.innerHTML = '✅ Plotly загружен! Версия: ' + Plotly.version;
+
+                // Создаем простой тестовый график
+                const data = [{
+                    x: [1, 2, 3, 4, 5],
+                    y: [1, 4, 9, 16, 25],
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: 'Test'
+                }];
+
+                const layout = {
+                    title: 'Тестовый график Plotly',
+                    xaxis: { title: 'X ось' },
+                    yaxis: { title: 'Y ось' }
+                };
+
+                Plotly.newPlot('chart', data, layout);
+                status.innerHTML += '<br>✅ График отрисован!';
+            } else {
+                status.innerHTML = '❌ Plotly не загружен';
+                setTimeout(checkPlotly, 100);
+            }
+        }
+
+        // Запускаем проверку
+        setTimeout(checkPlotly, 100);
+    </script>
+</body>
+</html>

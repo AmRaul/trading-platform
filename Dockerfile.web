@@ -1,0 +1,40 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Устанавливаем системные зависимости
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    build-essential \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Копируем и устанавливаем зависимости
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копируем исходный код
+COPY . .
+
+# Создаем директории
+RUN mkdir -p data reports logs templates static db
+
+# Создаем пользователя
+RUN useradd -m -u 1000 backtester && \
+    chown -R backtester:backtester /app
+USER backtester
+
+# Экспонируем порт
+EXPOSE 8000
+
+# Переменные окружения
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=web_app.py
+
+# Запускаем веб-сервер
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--capture-output", "web_app:app"]
+
