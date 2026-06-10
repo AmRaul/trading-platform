@@ -85,20 +85,20 @@ jobs:
             REPO_LOWERCASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             # Создаём .env из secrets
-            cat > .env << 'ENVEOF'
-POSTGRES_USER=${{ secrets.DB_USER }}
-POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}
-POSTGRES_DB=trading_db
-DATABASE_URL=${{ secrets.EXECUTION_DATABASE_URL }}
-REDIS_URL=${{ secrets.REDIS_URL }}
-SECRET_KEY=${{ secrets.SECRET_KEY }}
-ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
-BYBIT_TESTNET=false
-CRYPTORG_BASE_URL=https://api2.cryptorg.net
-BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]
-NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}
-NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}
-ENVEOF
+            {
+              echo "POSTGRES_USER=${{ secrets.DB_USER }}"
+              echo "POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}"
+              echo "POSTGRES_DB=trading_db"
+              echo "DATABASE_URL=${{ secrets.EXECUTION_DATABASE_URL }}"
+              echo "REDIS_URL=${{ secrets.REDIS_URL }}"
+              echo "SECRET_KEY=${{ secrets.SECRET_KEY }}"
+              echo "ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}"
+              echo "BYBIT_TESTNET=false"
+              echo "CRYPTORG_BASE_URL=https://api2.cryptorg.net"
+              echo 'BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]'
+              echo "NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}"
+              echo "NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}"
+            } > .env
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
