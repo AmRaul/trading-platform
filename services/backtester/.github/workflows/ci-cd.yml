@@ -90,9 +90,6 @@ jobs:
           - dockerfile: Dockerfile
             image-suffix: '-analytics'
             context: ./market-analytics
-          - dockerfile: bot/Dockerfile
-            image-suffix: '-bot'
-            context: ./market-analytics
 
     steps:
       - name: Checkout code
@@ -392,22 +389,19 @@ jobs:
             echo "🏥 Container health status:"
             docker inspect --format='{{.Name}}: {{.State.Health.Status}}' backtester_web_prod 2>/dev/null || echo "backtester_web_prod: no-healthcheck"
             docker inspect --format='{{.Name}}: {{.State.Health.Status}}' market_analytics_prod 2>/dev/null || echo "market_analytics_prod: no-healthcheck"
-            docker inspect --format='{{.Name}}: {{.State.Status}}' backtester_telegram_bot_prod 2>/dev/null || echo "backtester_telegram_bot_prod: unknown"
 
-            # Показываем последние логи всех сервисов
+            # Показываем последние логи
             echo "📝 Last 10 lines of each service logs:"
             echo "--- Backtester Web ---"
             docker compose -f docker-compose.prod.yml logs --tail=10 backtester-web
             echo "--- Market Analytics ---"
             docker compose -f docker-compose.prod.yml logs --tail=10 market-analytics
-            echo "--- Telegram Bot ---"
-            docker compose -f docker-compose.prod.yml logs --tail=10 telegram-bot
 
             # Финальная проверка
             RUNNING_COUNT=$(docker compose -f docker-compose.prod.yml ps | grep "Up" | wc -l)
             echo "📊 Running containers: $RUNNING_COUNT"
 
-            if [ $RUNNING_COUNT -ge 3 ]; then
+            if [ $RUNNING_COUNT -ge 2 ]; then
               echo "✅ Deployment completed successfully!"
               echo "🌐 Your application is available at: https://${{ secrets.DOMAIN }}"
             else

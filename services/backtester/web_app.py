@@ -42,6 +42,10 @@ from database import (
 from optimization_queue import global_optimization_queue
 from functools import wraps
 
+# Live signal generator
+import asyncio
+from live_signal_generator import LiveSignalGenerator
+
 app = Flask(__name__)
 app.secret_key = 'backtester_secret_key_change_in_production'
 
@@ -261,6 +265,11 @@ def load_backtest_from_db(task_id):
 def index():
     """Главная страница"""
     return render_template('index.html')
+
+@app.route('/live-signals')
+def live_signals_page():
+    """Страница live signal generator"""
+    return render_template('live_signals.html')
 
 @app.route('/config')
 def config_page():
@@ -1409,6 +1418,388 @@ def save_optimized_config(task_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# ============================================================================
+# Live Signal Generator API Endpoints
+# ============================================================================
+
+# Global dictionary to track live signal generators
+live_generators = {}
+
+@app.route('/api/live-signals/start', methods=['POST'])
+def start_live_signal_generator():
+    """Start live signal generator"""
+    try:
+        data = request.get_json()
+
+        # Extract parameters
+        config_name = data.get('config_name')
+        telegram_user_id = data.get('telegram_user_id')
+        dry_run = data.get('dry_run', True)
+
+        if not config_name:
+            return jsonify({'error': 'config_name is required'}), 400
+
+        # Check if generator already running for this config
+        if config_name in live_generators:
+            return jsonify({'error': f'Generator already running for {config_name}'}), 400
+
+        # Get config from database
+        with get_db_session() as session:
+            config = session.query(StrategyConfig).filter_by(name=config_name).first()
+
+            if not config:
+                return jsonify({'error': f'Configuration "{config_name}" not found'}), 404
+
+            # Extract config_json while session is active
+            config_json = config.config_json
+
+        # Save config to temporary file
+        import tempfile
+        import json
+
+        temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump(config_json, temp_config)
+        temp_config.close()
+
+        # Start generator in background thread
+        def run_generator_thread(config_path, telegram_uid, is_dry_run):
+            """Run generator in background thread with async loop"""
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+                generator = LiveSignalGenerator(
+                    config_path=config_path,
+                    telegram_user_id=telegram_uid,
+                    exchange_name='binance',
+                    dry_run=is_dry_run
+                )
+
+                # Store generator instance
+                live_generators[config_name]['generator'] = generator
+                live_generators[config_name]['status'] = 'running'
+
+                # Run main loop
+                loop.run_until_complete(generator.run())
+
+            except Exception as e:
+                logger.error(f"Generator thread error: {e}")
+                live_generators[config_name]['status'] = 'error'
+                live_generators[config_name]['error'] = str(e)
+            finally:
+                loop.close()
+
+        # Create and start thread
+        thread = threading.Thread(
+            target=run_generator_thread,
+            args=(temp_config.name, telegram_user_id, dry_run),
+            daemon=True,
+            name=f"generator_{config_name}"
+        )
+        thread.start()
+
+        # Store metadata
+        live_generators[config_name] = {
+            'status': 'starting',
+            'config_path': temp_config.name,
+            'telegram_user_id': telegram_user_id,
+            'dry_run': dry_run,
+            'started_at': datetime.now().isoformat(),
+            'thread': thread
+        }
+
+        return jsonify({
+            'success': True,
+            'message': f'Live signal generator starting for {config_name}',
+            'dry_run': dry_run,
+            'config_name': config_name
+        })
+
+    except Exception as e:
+        logger.error(f"Error starting live signal generator: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/live-signals/stop', methods=['POST'])
+def stop_live_signal_generator():
+    """Stop live signal generator"""
+    try:
+        data = request.get_json()
+        config_name = data.get('config_name')
+
+        if not config_name:
+            return jsonify({'error': 'config_name is required'}), 400
+
+        if config_name not in live_generators:
+            return jsonify({'error': f'No generator running for {config_name}'}), 404
+
+        generator_info = live_generators[config_name]
+
+        # Stop generator
+        if 'generator' in generator_info:
+            generator_info['generator'].is_running = False
+            logger.info(f"Signaled generator {config_name} to stop")
+
+        # Wait a bit for cleanup
+        import time
+        time.sleep(2)
+
+        # Remove from dict
+        live_generators.pop(config_name)
+
+        # Clean up temp config file
+        import os
+        if os.path.exists(generator_info['config_path']):
+            os.remove(generator_info['config_path'])
+
+        return jsonify({
+            'success': True,
+            'message': f'Live signal generator stopped for {config_name}'
+        })
+
+    except Exception as e:
+        logger.error(f"Error stopping live signal generator: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/live-signals/status', methods=['GET'])
+def get_live_signal_status():
+    """Get status of all live signal generators"""
+    try:
+        return jsonify({
+            'success': True,
+            'generators': live_generators
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting live signal status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trading-signals/history', methods=['GET'])
+def get_trading_signals_history():
+    """Get trading signals history from database"""
+    try:
+        # Get query parameters
+        limit = request.args.get('limit', 50, type=int)
+        symbol = request.args.get('symbol')
+        side = request.args.get('side')
+        status = request.args.get('status')
+
+        # Build query
+        session = get_db_session()
+
+        query = """
+            SELECT
+                signal_id,
+                timestamp,
+                symbol,
+                timeframe,
+                side,
+                entry_price,
+                take_profit_percent,
+                take_profit_price,
+                stop_loss_percent,
+                stop_loss_price,
+                dca_enabled,
+                dca_grid,
+                indicators,
+                strategy_name,
+                status,
+                quality_score,
+                created_at
+            FROM backtester.trading_signals
+            WHERE 1=1
+        """
+
+        params = []
+
+        if symbol:
+            query += " AND symbol = %s"
+            params.append(symbol)
+
+        if side:
+            query += " AND side = %s"
+            params.append(side)
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        query += " ORDER BY timestamp DESC LIMIT %s"
+        params.append(limit)
+
+        # Execute query
+        import psycopg2
+        conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+
+        columns = [desc[0] for desc in cursor.description]
+        signals = []
+
+        for row in cursor.fetchall():
+            signal = dict(zip(columns, row))
+
+            # Convert datetime to string
+            if signal.get('timestamp'):
+                signal['timestamp'] = signal['timestamp'].isoformat()
+            if signal.get('created_at'):
+                signal['created_at'] = signal['created_at'].isoformat()
+
+            # Convert UUID to string
+            if signal.get('signal_id'):
+                signal['signal_id'] = str(signal['signal_id'])
+
+            signals.append(signal)
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'signals': signals,
+            'count': len(signals)
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting trading signals: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trading-signals/<signal_id>', methods=['GET'])
+def get_trading_signal_by_id(signal_id):
+    """Get specific trading signal by ID"""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                signal_id,
+                timestamp,
+                symbol,
+                timeframe,
+                exchange,
+                side,
+                entry_price,
+                take_profit_percent,
+                take_profit_price,
+                stop_loss_percent,
+                stop_loss_price,
+                dca_enabled,
+                dca_grid,
+                indicators,
+                strategy_name,
+                strategy_config,
+                status,
+                telegram_user_id,
+                notification_sent_at,
+                notification_status,
+                quality_score,
+                notes,
+                created_at,
+                updated_at
+            FROM backtester.trading_signals
+            WHERE signal_id = %s
+        """, (signal_id,))
+
+        row = cursor.fetchone()
+
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Signal not found'}), 404
+
+        columns = [desc[0] for desc in cursor.description]
+        signal = dict(zip(columns, row))
+
+        # Convert datetime to string
+        for field in ['timestamp', 'notification_sent_at', 'created_at', 'updated_at']:
+            if signal.get(field):
+                signal[field] = signal[field].isoformat()
+
+        # Convert UUID to string
+        if signal.get('signal_id'):
+            signal['signal_id'] = str(signal['signal_id'])
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'signal': signal
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting signal by ID: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trading-signals/stats', methods=['GET'])
+def get_trading_signals_stats():
+    """Get statistics about trading signals"""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(os.getenv('DATABASE_URL'))
+        cursor = conn.cursor()
+
+        # Total signals
+        cursor.execute("SELECT COUNT(*) FROM backtester.trading_signals")
+        total_signals = cursor.fetchone()[0]
+
+        # Signals by status
+        cursor.execute("""
+            SELECT status, COUNT(*)
+            FROM backtester.trading_signals
+            GROUP BY status
+        """)
+        by_status = dict(cursor.fetchall())
+
+        # Signals by side
+        cursor.execute("""
+            SELECT side, COUNT(*)
+            FROM backtester.trading_signals
+            GROUP BY side
+        """)
+        by_side = dict(cursor.fetchall())
+
+        # Average quality score
+        cursor.execute("SELECT AVG(quality_score) FROM backtester.trading_signals")
+        avg_quality = cursor.fetchone()[0] or 0
+
+        # Recent signals (last 24h)
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM backtester.trading_signals
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+        """)
+        recent_24h = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total_signals': total_signals,
+                'by_status': by_status,
+                'by_side': by_side,
+                'avg_quality_score': float(avg_quality),
+                'signals_last_24h': recent_24h
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting signals stats: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Error Handlers
+# ============================================================================
 
 @app.errorhandler(404)
 def not_found(error):

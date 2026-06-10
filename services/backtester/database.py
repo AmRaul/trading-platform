@@ -3,7 +3,7 @@ Database layer for Backtester - PostgreSQL with SQLAlchemy
 Migration from SQLite to PostgreSQL
 """
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, Float, DateTime, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, Float, DateTime, Boolean, JSON, ARRAY
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.pool import QueuePool
@@ -101,7 +101,7 @@ class StrategyConfig(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_public = Column(Boolean, default=False)
     author = Column(String(100), default='user')
-    tags = Column(JSON)  # Using JSON instead of ARRAY for SQLAlchemy compatibility
+    tags = Column(ARRAY(String))  # PostgreSQL TEXT[] array type
     performance_score = Column(Float, default=0.0)
 
     def to_dict(self):
