@@ -2,13 +2,15 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.redis import init_redis, close_redis
-from app.api.routes import auth, bots, trading, positions, trades, websocket, screener, signals, trend_signals
+from app.api.routes import auth, bots, trading, positions, trades, websocket, screener, signals, trend_signals, profile
 
 logging.basicConfig(
     level=logging.INFO,
@@ -132,8 +134,14 @@ app = FastAPI(
     title="Trading Dashboard API",
     description="Trend Pyramiding Trading Bot API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = [{"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()]
+    logger.error(f"[422] {request.method} {request.url} — {errors}")
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 app.add_middleware(
     CORSMiddleware,
@@ -152,6 +160,7 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(screener.router, prefix="/api/screener", tags=["screener"])
 app.include_router(signals.router, prefix="/api/signals", tags=["signals"])
 app.include_router(trend_signals.router, prefix="/api/trend-signals", tags=["trend-signals"])
+app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 
 
 @app.get("/")

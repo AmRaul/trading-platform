@@ -3,6 +3,7 @@ from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Bot, Position, Order
+from app.models.user_credential import UserCredential
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.adapters.cryptorg_executor import CryptorgExecutorAdapter
@@ -12,6 +13,7 @@ from app.application.trading.open_position import OpenPositionUseCase
 from app.application.trading.close_position import ClosePositionUseCase
 from app.application.trading.add_pyramiding_order import AddPyramidingOrderUseCase
 from app.application.trading.handle_price_update import HandlePriceUpdateUseCase
+from app.services.cryptorg import get_cryptorg_client
 import logging
 import time
 
@@ -39,21 +41,29 @@ class StrategyEngine:
         self._is_closing = False
         self._last_tick_log = 0.0
 
-        executor = CryptorgExecutorAdapter()
-        market = BybitMarketDataAdapter()
-        publisher = WebSocketPublisherAdapter()
-
-        self._open_uc = OpenPositionUseCase(executor, market, publisher)
-        self._close_uc = ClosePositionUseCase(executor, publisher)
-        self._add_order_uc = AddPyramidingOrderUseCase(executor, market, publisher)
-        self._price_update_uc = HandlePriceUpdateUseCase(publisher)
-        self._publisher = publisher
+        self._market = BybitMarketDataAdapter()
+        self._publisher = WebSocketPublisherAdapter()
 
     async def initialize(self):
         result = await self.db.execute(select(Bot).where(Bot.id == self.bot_id))
         self.bot = result.scalar_one_or_none()
         if not self.bot:
             raise ValueError(f"Bot {self.bot_id} not found")
+
+        # Load user credential and build executor with the correct webhook URL
+        credential = None
+        if self.bot.user_id:
+            cred_result = await self.db.execute(
+                select(UserCredential).where(UserCredential.user_id == self.bot.user_id)
+            )
+            credential = cred_result.scalar_one_or_none()
+
+        executor = CryptorgExecutorAdapter(get_cryptorg_client(credential))
+
+        self._open_uc = OpenPositionUseCase(executor, self._market, self._publisher)
+        self._close_uc = ClosePositionUseCase(executor, self._publisher)
+        self._add_order_uc = AddPyramidingOrderUseCase(executor, self._market, self._publisher)
+        self._price_update_uc = HandlePriceUpdateUseCase(self._publisher)
 
         result = await self.db.execute(
             select(Position).where(Position.bot_id == self.bot_id, Position.is_open == True)
@@ -142,16 +152,19 @@ class StrategyEngine:
                 await self._close_position(current_price, exit_reason)
                 return
 
-            # 2. Check pyramiding trigger
-            if self.calculator.should_add_order(self.bot.side, current_price, last_order_price):
-                if self._is_adding_order:
+            # 2. Check add-order trigger
+            # DCA bots: Cryptorg handles limit orders natively — no manual averaging needed
+            bot_type = self.bot.config.get("bot_type", "pyramiding")
+            if bot_type == "pyramiding":
+                if self.calculator.should_add_order(self.bot.side, current_price, last_order_price):
+                    if self._is_adding_order:
+                        return
+                    logger.info(
+                        f"[AVG TRIGGER] bot={self.bot_id} current={current_price} "
+                        f"last_order={last_order_price} orders={orders_count}"
+                    )
+                    await self._add_pyramiding_order(current_price)
                     return
-                logger.info(
-                    f"[AVG TRIGGER] bot={self.bot_id} current={current_price} "
-                    f"last_order={last_order_price} orders={orders_count}"
-                )
-                await self._add_pyramiding_order(current_price)
-                return
 
             # 3. Update trailing SL + PnL
             await self._price_update_uc.execute(self.bot, self.position, self.calculator, current_price)

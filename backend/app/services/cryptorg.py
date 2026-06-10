@@ -1,6 +1,7 @@
 import aiohttp
 from typing import Optional, Dict
 from app.core.config import settings
+from app.core.encryption import decrypt
 import logging
 
 logger = logging.getLogger(__name__)
@@ -16,8 +17,8 @@ class CryptorgClient:
     Bybit is used only for price data, while Cryptorg handles actual trading.
     """
 
-    def __init__(self):
-        self.webhook_url = getattr(settings, 'CRYPTORG_WEBHOOK_URL', '')
+    def __init__(self, webhook_url: str = ""):
+        self.webhook_url = webhook_url or getattr(settings, 'CRYPTORG_WEBHOOK_URL', '')
         self.timeout = aiohttp.ClientTimeout(total=30)
 
     async def _send_webhook(self, payload: dict) -> Optional[dict]:
@@ -48,32 +49,47 @@ class CryptorgClient:
         leverage: int = 10,
         sl_percent: float = 5.0,
         tp_percent: float = 3.0,
+        dca_config: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Open position with SL and TP in percent."""
-        payload = {
-            "action": "open",
-            "params": {
-                "strategy": side.lower(),
-                "pairs": [symbol],
-                "open": {
-                    "orderVolume": str(order_volume_usdt),
-                    "leverage": leverage,
-                    "marginType": "cross",
-                    "orderType": "Market"
-                },
-                "close": {
-                    "enabled": True,
-                    "event": "percentage",
-                    "value": str(tp_percent)
-                },
-                "stop": {
-                    "enabled": True,
-                    "event": "percentage",
-                    "value": str(sl_percent),
-                    "delay": 3
-                }
-            }
+        """Open position with SL and TP in percent. Pass dca_config for native Cryptorg DCA."""
+        params: Dict = {
+            "strategy": side.lower(),
+            "pairs": [symbol],
+            "open": {
+                "orderVolume": str(order_volume_usdt),
+                "leverage": leverage,
+                "marginType": "cross",
+                "orderType": "Market"
+            },
+            "close": {
+                "enabled": tp_percent is not None,
+                "event": "percentage",
+                "value": str(tp_percent) if tp_percent is not None else "0"
+            },
         }
+
+        if sl_percent is not None:
+            params["stop"] = {
+                "enabled": True,
+                "event": "percentage",
+                "value": str(sl_percent),
+                "delay": 3
+            }
+        else:
+            params["stop"] = {"enabled": False}
+
+        if dca_config:
+            params["dca"] = {
+                "enabled": True,
+                "max": dca_config.get("max", 10),
+                "active": dca_config.get("active", 3),
+                "volume": str(dca_config.get("volume", order_volume_usdt)),
+                "percent": str(dca_config.get("percent", 2.0)),
+                "multiplierVolume": str(dca_config.get("multiplier_volume", 1.0)),
+                "multiplierPrice": str(dca_config.get("multiplier_price", 1.0)),
+            }
+
+        payload = {"action": "open", "params": params}
 
         logger.info(f"Opening Ghost Bot position: {payload}")
         result = await self._send_webhook(payload)
@@ -147,26 +163,31 @@ class CryptorgClient:
         symbol: str,
         side: str,
         sl_percent: float,
-        tp_percent: float,
+        tp_percent: Optional[float] = None,
     ) -> Optional[Dict]:
-        """Update SL and TP after averaging. Both values are percent from avg price."""
+        """Update SL and optionally TP after averaging. tp_percent=None leaves TP disabled."""
+        params: Dict = {
+            "strategy": side.lower(),
+            "pairs": [symbol],
+            "close": {
+                "enabled": tp_percent is not None,
+                "event": "percentage",
+                "value": str(tp_percent) if tp_percent is not None else "0"
+            },
+        }
+        if sl_percent:
+            params["stop"] = {
+                "enabled": True,
+                "event": "percentage",
+                "value": str(sl_percent),
+                "delay": 3
+            }
+        else:
+            params["stop"] = {"enabled": False}
+
         payload = {
             "action": "update",
-            "params": {
-                "strategy": side.lower(),
-                "pairs": [symbol],
-                "close": {
-                    "enabled": True,
-                    "event": "percentage",
-                    "value": str(tp_percent)
-                },
-                "stop": {
-                    "enabled": True,
-                    "event": "percentage",
-                    "value": str(sl_percent),
-                    "delay": 3
-                }
-            }
+            "params": params
         }
 
         logger.info(f"Updating Ghost Bot stop/tp: {payload}")
@@ -177,5 +198,11 @@ class CryptorgClient:
         return {"success": False, "error": "Failed to update stop/tp"}
 
 
-# Global instance
+def get_cryptorg_client(credential=None) -> "CryptorgClient":
+    if credential is not None:
+        return CryptorgClient(webhook_url=decrypt(credential.webhook_url))
+    return CryptorgClient()
+
+
+# Global instance (fallback for single-user mode)
 cryptorg_client = CryptorgClient()

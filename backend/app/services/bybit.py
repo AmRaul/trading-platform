@@ -1,6 +1,7 @@
 from pybit.unified_trading import HTTP, WebSocket
 from app.core.config import settings
 from typing import Optional, Callable
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -11,12 +12,10 @@ class BybitClient:
 
     def __init__(self):
         self.testnet = settings.BYBIT_TESTNET
-        # Public HTTP client - no API keys needed for public endpoints
         self.http_client = HTTP(testnet=self.testnet)
         self.ws_client: Optional[WebSocket] = None
 
     def init_websocket(self, on_message: Callable):
-        """Initialize WebSocket connection"""
         self.ws_client = WebSocket(
             testnet=self.testnet,
             channel_type="linear",
@@ -24,11 +23,12 @@ class BybitClient:
         return self.ws_client
 
     async def get_ticker(self, symbol: str) -> dict:
-        """Get current ticker price (public endpoint, no auth required)"""
+        """Get current ticker price — runs sync pybit call in executor to avoid blocking event loop"""
         try:
-            response = self.http_client.get_tickers(
-                category="linear",
-                symbol=symbol
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: self.http_client.get_tickers(category="linear", symbol=symbol)
             )
             if response["retCode"] == 0 and response["result"]["list"]:
                 return response["result"]["list"][0]

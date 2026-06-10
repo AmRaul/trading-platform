@@ -27,12 +27,28 @@ class OpenPositionUseCase:
             return {"success": False, "error": "Failed to get ticker price"}
 
         current_price = float(ticker["lastPrice"])
-        sl_percent = bot.config["sl_initial"]
-        tp_percent = bot.config.get("tp_percent", 3.0)
+        sl_percent = bot.config.get("sl_initial")  # None means disabled
+        bot_type = bot.config.get("bot_type", "pyramiding")
+        # DCA: Cryptorg manages limit orders natively — set TP immediately on open
+        # Pyramiding: TP is set only after the last order to avoid premature close
+        tp_percent = bot.config.get("tp_percent") if bot_type == "dca" else None
+
+        # For DCA bots: build native Cryptorg DCA config so it places limit orders itself
+        dca_config = None
+        if bot_type == "dca":
+            dca_config = {
+                "max": bot.config.get("order_count", 10),
+                "active": bot.config.get("dca_active_orders", 3),
+                "volume": bot.config.get("entry_size_usdt", order_size_usdt),
+                "percent": bot.config.get("step_percent", 2.0),
+                "multiplier_volume": bot.config.get("dca_multiplier", 1.0),
+                "multiplier_price": bot.config.get("dca_multiplier_price", 1.0),
+            }
 
         logger.info(
-            f"[OPEN] bot={bot.id} symbol={bot.symbol} side={bot.side} "
+            f"[OPEN] bot={bot.id} type={bot_type} symbol={bot.symbol} side={bot.side} "
             f"size={order_size_usdt:.2f} USDT price={current_price} SL={sl_percent}% TP={tp_percent}%"
+            + (f" DCA={dca_config}" if dca_config else "")
         )
 
         order_result = await self.executor.open_position(
@@ -42,6 +58,7 @@ class OpenPositionUseCase:
             leverage=bot.config["leverage"],
             sl_percent=sl_percent,
             tp_percent=tp_percent,
+            dca_config=dca_config,
         )
 
         if not order_result or not order_result.get("success"):

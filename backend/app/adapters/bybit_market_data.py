@@ -1,5 +1,6 @@
 from typing import Dict, List
 from app.services.bybit import bybit_client
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -12,18 +13,16 @@ class BybitMarketDataAdapter:
         return await bybit_client.get_ticker(symbol)
 
     async def get_klines(self, symbol: str, interval: str, limit: int) -> List[Dict]:
-        """
-        Fetch OHLCV candles from Bybit.
-
-        interval: "1" (1m), "5", "15", "60" (1H), "240" (4H), "D"
-        Returns list of dicts with keys: open, high, low, close, volume, timestamp
-        """
         try:
-            response = bybit_client.http_client.get_kline(
-                category="linear",
-                symbol=symbol,
-                interval=interval,
-                limit=limit,
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: bybit_client.http_client.get_kline(
+                    category="linear",
+                    symbol=symbol,
+                    interval=interval,
+                    limit=limit,
+                )
             )
             if response["retCode"] != 0:
                 logger.error(f"Bybit klines error for {symbol}: {response}")

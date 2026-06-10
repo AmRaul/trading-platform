@@ -80,6 +80,24 @@ class ClosePositionUseCase:
 
         logger.info(f"Position closed: {exit_reason}, PnL: {pnl:.2f} ({pnl_percent:.2f}%)")
 
+        # Auto-cycle: reopen position immediately after close if enabled
+        if bot.config.get("cycle", False):
+            import asyncio
+            from app.services.websocket import price_stream_manager
+            async def _reopen():
+                try:
+                    await price_stream_manager.register_strategy(bot.id)
+                    engine = price_stream_manager.strategy_engines.get(bot.id)
+                    if engine:
+                        result = await engine.manual_entry()
+                        if result.get("success"):
+                            logger.info(f"[CYCLE] bot={bot.id} reopened after {exit_reason}")
+                        else:
+                            logger.warning(f"[CYCLE] bot={bot.id} reopen failed: {result.get('error')}")
+                except Exception as e:
+                    logger.error(f"[CYCLE] bot={bot.id} reopen error: {e}")
+            asyncio.create_task(_reopen())
+
         await self.publisher.publish("position_closed", {
             "bot_id": bot.id,
             "symbol": bot.symbol,

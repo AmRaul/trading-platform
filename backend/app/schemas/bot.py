@@ -7,144 +7,60 @@ logger = logging.getLogger(__name__)
 
 
 class StrategyConfig(BaseModel):
-    """
-    Trading strategy configuration with strict validation.
+    """Trading strategy configuration."""
 
-    All parameters are validated to ensure safe trading practices.
-    """
-    order_count: int = Field(
-        default=4,
-        ge=1,
-        le=10,
-        description="Max pyramid orders (1-10)"
-    )
-    entry_size_usdt: float = Field(
-        default=10.0,
-        gt=0,
-        le=10000,
-        description="First order size in USDT (max 10,000)"
-    )
-    step_percent: float = Field(
-        default=4.0,
-        gt=0,
-        le=50,
-        description="Price step for next order in % (0-50%)"
-    )
-    leverage: int = Field(
-        default=10,
-        ge=1,
-        le=125,
-        description="Leverage multiplier (max 125x on Bybit)"
-    )
-    pyramiding_multiplier: float = Field(
-        default=1.5,
-        ge=1.0,
-        le=3.0,
-        description="Order size multiplier (1-3x)"
-    )
-    sl_initial: float = Field(
-        default=5.0,
-        gt=0,
-        le=50,
-        description="Initial stop-loss in % (0-50%)"
-    )
-    sl_after_order3: float = Field(
-        default=2.0,
-        gt=0,
-        le=50,
-        description="SL offset in profit after order 3 in % (0-50%)"
-    )
-    sl_breakeven_on_order2: bool = Field(
-        default=True,
-        description="Move SL to breakeven after order 2"
-    )
-    use_trailing: bool = Field(
-        default=True,
-        description="Enable trailing stop"
-    )
-    trailing_percent: float = Field(
-        default=1.5,
-        gt=0,
-        le=20,
-        description="Trailing stop distance in % (0-20%)"
-    )
-    sl_breakeven_plus: float = Field(
-        default=0.5,
-        ge=0,
-        le=10,
-        description="SL offset in profit after order 3+ in %"
-    )
-    tp_percent: float = Field(
-        default=3.0,
-        gt=0,
-        le=100,
-        description="Take profit in %"
-    )
+    bot_type: str = Field(default="pyramiding", pattern="^(pyramiding|dca)$")
+
+    order_count: int = Field(default=4, ge=1, le=10)
+    entry_size_usdt: float = Field(default=10.0, gt=0, le=10000)
+    step_percent: float = Field(default=4.0, gt=0, le=50)
+    leverage: int = Field(default=10, ge=1, le=125)
+
+    # Pyramiding-specific
+    pyramiding_multiplier: float = Field(default=1.5, ge=1.0, le=3.0)
+    sl_after_order3: float = Field(default=2.0, gt=0, le=50)
+    sl_breakeven_on_order2: bool = Field(default=True)
+    sl_breakeven_plus: float = Field(default=0.5, ge=0, le=10)
+
+    # DCA-specific
+    dca_multiplier: float = Field(default=1.0, ge=1.0, le=5.0)
+    dca_active_orders: int = Field(default=3, ge=1, le=10)
+    dca_multiplier_price: float = Field(default=1.0, ge=1.0, le=3.0)
+
+    # Stop loss — None means disabled
+    sl_initial: Optional[float] = Field(default=5.0, ge=0, le=50)
+
+    # Common
+    use_trailing: bool = Field(default=True)
+    trailing_percent: float = Field(default=1.5, gt=0, le=20)
+    tp_percent: float = Field(default=3.0, gt=0, le=100)
+    cycle: bool = Field(default=False)
 
     @validator('entry_size_usdt')
     def validate_entry_size(cls, v):
-        """Ensure entry size is reasonable"""
         if v < 10:
             raise ValueError('Entry size too small (min 10 USDT)')
         return v
 
     @validator('leverage')
     def validate_leverage(cls, v):
-        """Warn about high leverage"""
         if v > 20:
             logger.warning(f"High leverage detected: {v}x - Extreme risk!")
         if v > 50:
             logger.error(f"Very high leverage: {v}x - Not recommended!")
         return v
 
-    @validator('pyramiding_multiplier')
-    def validate_multiplier(cls, v):
-        if v > 2.5:
-            logger.warning(f'High multiplier: {v} - final orders will be very large')
-        return v
-
     @validator('step_percent')
     def validate_step(cls, v):
-        """Ensure step is not too small or large"""
         if v < 0.5:
-            raise ValueError('Step too small (min 0.5%) - too many orders possible')
-        if v > 20:
-            logger.warning(f'Large step: {v}% - orders might not trigger')
-        return v
-
-    @validator('sl_initial')
-    def validate_sl_initial(cls, v):
-        """Validate initial stop loss"""
-        if v > 20:
-            logger.warning(f'Large initial SL: {v}% - high risk per trade')
+            raise ValueError('Step too small (min 0.5%)')
         return v
 
     @validator('trailing_percent')
     def validate_trailing(cls, v):
-        """Validate trailing stop"""
         if v < 0.5:
-            raise ValueError('Trailing too tight (min 0.5%) - will trigger too early')
-        if v > 10:
-            logger.warning(f'Wide trailing: {v}% - might give back too much profit')
+            raise ValueError('Trailing too tight (min 0.5%)')
         return v
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "order_count": 4,
-                "entry_size_usdt": 100,
-                "step_percent": 4,
-                "leverage": 10,
-                "pyramiding_multiplier": 1.5,
-                "sl_initial": 5,
-                "sl_after_order3": 2,
-                "sl_breakeven_plus": 0.5,
-                "use_trailing": True,
-                "trailing_percent": 1.5,
-                "tp_percent": 3.0
-            }
-        }
-    }
 
 
 class OpenPositionData(BaseModel):
@@ -192,6 +108,8 @@ class BotCreate(BaseModel):
 
 class BotUpdate(BaseModel):
     name: Optional[str] = None
+    symbol: Optional[str] = None
+    side: Optional[str] = Field(default=None, pattern="^(LONG|SHORT)$")
     config: Optional[StrategyConfig] = None
     is_active: Optional[bool] = None
 

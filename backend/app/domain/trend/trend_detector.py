@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from app.domain.trend.ema_calculator import ema21_series
 
 # Откат считается если цена в пределах X% от EMA21
-PULLBACK_TOLERANCE_PCT = 2.0
+PULLBACK_TOLERANCE_PCT = 5.0
 
 
 @dataclass
@@ -74,9 +74,12 @@ class TrendDetector:
         trigger_low_15m = float(last_candle_15m["low"])
 
         # --- LONG ---
-        trend_up = last_close_4h > ema_4h_now and ema_4h_now > ema_4h_prev
-        pullback_long = _is_near_ema(last_close_1h, ema_1h_now, PULLBACK_TOLERANCE_PCT)
-        trigger_long = last_close_15m > prev_high_15m
+        # Тренд: цена выше EMA21 на 4H (не требуем строгого роста EMA — достаточно направления)
+        trend_up = last_close_4h > ema_4h_now
+        # Откат: 1H цена близко к EMA21 (±5%) или ниже неё но разворачивается
+        pullback_long = _is_near_ema(last_close_1h, ema_1h_now, PULLBACK_TOLERANCE_PCT) or last_close_1h <= ema_1h_now * 1.01
+        # Триггер: бычья 15m свеча (close > open) или пробой хая предыдущей
+        trigger_long = last_close_15m > float(last_candle_15m["open"]) or last_close_15m > prev_high_15m
 
         if trend_up and pullback_long and trigger_long:
             entry = last_close_15m
@@ -96,9 +99,9 @@ class TrendDetector:
             )
 
         # --- SHORT ---
-        trend_down = last_close_4h < ema_4h_now and ema_4h_now < ema_4h_prev
-        pullback_short = _is_near_ema(last_close_1h, ema_1h_now, PULLBACK_TOLERANCE_PCT)
-        trigger_short = last_close_15m < float(prev_candle_15m["low"])
+        trend_down = last_close_4h < ema_4h_now
+        pullback_short = _is_near_ema(last_close_1h, ema_1h_now, PULLBACK_TOLERANCE_PCT) or last_close_1h >= ema_1h_now * 0.99
+        trigger_short = last_close_15m < float(last_candle_15m["open"]) or last_close_15m < float(prev_candle_15m["low"])
 
         if trend_down and pullback_short and trigger_short:
             entry = last_close_15m

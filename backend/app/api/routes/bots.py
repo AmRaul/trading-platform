@@ -18,7 +18,9 @@ async def get_bots(
     current_user: User = Depends(get_current_user)
 ):
     """Get all bots"""
-    result = await db.execute(select(Bot).order_by(Bot.created_at.desc()))
+    result = await db.execute(
+        select(Bot).where(Bot.user_id == current_user.id).order_by(Bot.created_at.desc())
+    )
     bots = result.scalars().all()
 
     # Fetch open positions for active bots
@@ -36,25 +38,23 @@ async def get_bots(
         for pos in pos_result.scalars().all():
             positions_by_bot[pos.bot_id] = pos
 
-    # Get last_order_price per bot (Redis first, then DB fallback)
-    last_order_prices = {}
-    for bot_id, pos in positions_by_bot.items():
+    # Get last_order_price per bot — all Redis calls in parallel
+    import asyncio as _asyncio
+
+    async def _get_last_price(bot_id: int, pos: any):
         redis_state = await get_position_state(str(bot_id))
         if redis_state and redis_state.get("last_order_price"):
-            last_order_prices[bot_id] = redis_state["last_order_price"]
-        else:
-            order_result = await db.execute(
-                select(Order.price)
-                .where(
-                    and_(
-                        Order.position_id == pos.id,
-                        Order.status == "FILLED"
-                    )
-                )
-                .order_by(Order.order_number.desc())
-                .limit(1)
-            )
-            last_order_prices[bot_id] = order_result.scalar_one_or_none()
+            return bot_id, redis_state["last_order_price"]
+        order_result = await db.execute(
+            select(Order.price)
+            .where(and_(Order.position_id == pos.id, Order.status == "FILLED"))
+            .order_by(Order.order_number.desc())
+            .limit(1)
+        )
+        return bot_id, order_result.scalar_one_or_none()
+
+    results = await _asyncio.gather(*[_get_last_price(bid, pos) for bid, pos in positions_by_bot.items()])
+    last_order_prices = dict(results)
 
     # Assemble response with open_position
     response = []
@@ -111,7 +111,9 @@ async def get_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Get single bot"""
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
+    result = await db.execute(
+        select(Bot).where(Bot.id == bot_id, Bot.user_id == current_user.id)
+    )
     bot = result.scalar_one_or_none()
 
     if not bot:
@@ -128,6 +130,7 @@ async def create_bot(
 ):
     """Create new bot"""
     bot = Bot(
+        user_id=current_user.id,
         name=bot_data.name,
         symbol=bot_data.symbol,
         side=bot_data.side,
@@ -151,7 +154,9 @@ async def update_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Update bot"""
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
+    result = await db.execute(
+        select(Bot).where(Bot.id == bot_id, Bot.user_id == current_user.id)
+    )
     bot = result.scalar_one_or_none()
 
     if not bot:
@@ -159,6 +164,12 @@ async def update_bot(
 
     if bot_data.name is not None:
         bot.name = bot_data.name
+
+    if bot_data.side is not None:
+        bot.side = bot_data.side
+
+    if bot_data.symbol is not None:
+        bot.symbol = bot_data.symbol
 
     if bot_data.config is not None:
         bot.config = bot_data.config.model_dump()
@@ -179,7 +190,9 @@ async def delete_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Delete bot"""
-    result = await db.execute(select(Bot).where(Bot.id == bot_id))
+    result = await db.execute(
+        select(Bot).where(Bot.id == bot_id, Bot.user_id == current_user.id)
+    )
     bot = result.scalar_one_or_none()
 
     if not bot:

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List
 from app.core.database import get_db
-from app.models import User, Position
+from app.models import User, Bot, Position
 from app.schemas.position import PositionResponse
 from app.api.deps import get_current_user
 
@@ -16,18 +16,17 @@ async def get_positions(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get positions"""
-    query = select(Position)
-
+    query = (
+        select(Position)
+        .join(Bot, Bot.id == Position.bot_id)
+        .where(Bot.user_id == current_user.id)
+    )
     if is_open is not None:
         query = query.where(Position.is_open == is_open)
-
     query = query.order_by(Position.opened_at.desc())
 
     result = await db.execute(query)
-    positions = result.scalars().all()
-
-    return positions
+    return result.scalars().all()
 
 
 @router.get("/bot/{bot_id}", response_model=List[PositionResponse])
@@ -36,12 +35,10 @@ async def get_bot_positions(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get positions for specific bot"""
     result = await db.execute(
         select(Position)
-        .where(Position.bot_id == bot_id)
+        .join(Bot, Bot.id == Position.bot_id)
+        .where(Position.bot_id == bot_id, Bot.user_id == current_user.id)
         .order_by(Position.opened_at.desc())
     )
-    positions = result.scalars().all()
-
-    return positions
+    return result.scalars().all()
