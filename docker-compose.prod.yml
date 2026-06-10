@@ -105,30 +105,6 @@ services:
       retries: 3
       start_period: 40s
 
-  # Telegram Bot - Notifications & Commands
-  telegram-bot:
-    image: ghcr.io/${GITHUB_REPOSITORY:-username/backtester}-bot:latest
-    container_name: backtester_telegram_bot_prod
-    restart: unless-stopped
-    volumes:
-      - ./logs:/app/logs
-    environment:
-      - PYTHONUNBUFFERED=1
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - ANALYTICS_API_URL=http://market-analytics:8001
-      - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/2
-      - DB_USER=${DB_USER:-backtester}
-      - DB_PASSWORD=${DB_PASSWORD:-changeme}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=backtester
-    depends_on:
-      - market-analytics
-      - postgres
-      - redis
-    networks:
-      - backtester_network
 
 networks:
   backtester_network:
