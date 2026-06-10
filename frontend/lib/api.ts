@@ -82,3 +82,10 @@ export const signalsApi = {
 export const trendSignalsApi = {
   getAll: (limit = 200) => api.get('/api/trend-signals/', { params: { limit } }),
 };
+
+// Profile API
+export const profileApi = {
+  getCredentials: () => api.get('/api/profile/credentials'),
+  saveCredentials: (data: { exchange: string; webhook_url: string; api_key?: string; api_secret?: string }) =>
+    api.put('/api/profile/credentials', data),
+};
