@@ -89,6 +89,43 @@ services:
       - backend
     command: npm run dev
 
+  signals-db:
+    image: postgres:16-alpine
+    container_name: trading_signals_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SIGNALS_DB_USER:-signals}
+      POSTGRES_PASSWORD: ${SIGNALS_DB_PASSWORD:-signals123}
+      POSTGRES_DB: signals_db
+    volumes:
+      - signals_db_data:/var/lib/postgresql/data
+    networks:
+      - trading_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signals -d signals_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  signals:
+    image: ${SIGNALS_IMAGE:-ghcr.io/amraul/trading-platform-signals:latest}
+    container_name: trading_signals
+    restart: unless-stopped
+    expose:
+      - "8020"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${SIGNALS_DB_USER:-signals}:${SIGNALS_DB_PASSWORD:-signals123}@signals-db:5432/signals_db
+      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
+    networks:
+      - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_signals"
+    depends_on:
+      signals-db:
+        condition: service_healthy
+
   price-tracker:
     image: ${PRICE_TRACKER_IMAGE:-ghcr.io/amraul/trading-platform-price-tracker:latest}
     container_name: trading_price_tracker
@@ -161,3 +198,4 @@ volumes:
   redis_data:
   loki_data:
   grafana_data:
+  signals_db_data:

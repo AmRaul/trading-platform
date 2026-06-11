@@ -1,22 +1,20 @@
-name: Execution Service CI/CD
+name: Signals Service CI/CD
 
 on:
   push:
     branches: [main]
     paths:
-      - 'backend/**'
-      - 'frontend/**'
-      - '.github/workflows/execution.yml'
+      - 'services/signals/**'
+      - '.github/workflows/signals.yml'
   pull_request:
     branches: [main]
     paths:
-      - 'backend/**'
-      - 'frontend/**'
+      - 'services/signals/**'
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}-execution
+  IMAGE_NAME: ${{ github.repository }}-signals
 
 jobs:
   build:
@@ -47,15 +45,14 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push backend image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
-          file: ./backend/Dockerfile
+          context: ./services/signals
+          file: ./services/signals/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -72,6 +69,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy docker-compose to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/opt/trading-platform/"
+
       - name: Deploy to production
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -81,36 +87,14 @@ jobs:
           script: |
             cd /opt/trading-platform
 
-            REPO_LOWERCASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-
-            # Создаём .env из secrets
-            {
-              echo "POSTGRES_USER=${{ secrets.DB_USER }}"
-              echo "POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }}"
-              echo "POSTGRES_DB=trading_db"
-              echo "DATABASE_URL=${{ secrets.EXECUTION_DATABASE_URL }}"
-              echo "REDIS_URL=${{ secrets.REDIS_URL }}"
-              echo "SECRET_KEY=${{ secrets.SECRET_KEY }}"
-              echo "ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}"
-              echo "BYBIT_TESTNET=false"
-              echo "CRYPTORG_BASE_URL=https://api2.cryptorg.net"
-              echo 'BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]'
-              echo "NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}"
-              echo "NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}"
-              echo "GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}"
-              echo "PRICE_TRACKER_URL=http://price-tracker:8010/subscribe"
-              echo "NEXT_PUBLIC_SIGNALS_URL=https://signals.${{ secrets.DOMAIN_BASE }}"
-            } > .env
+            # Добавляем переменные signals в .env если их нет
+            grep -q "SIGNALS_DB_USER" .env || echo "SIGNALS_DB_USER=${{ secrets.SIGNALS_DB_USER }}" >> .env
+            grep -q "SIGNALS_DB_PASSWORD" .env || echo "SIGNALS_DB_PASSWORD=${{ secrets.SIGNALS_DB_PASSWORD }}" >> .env
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            docker compose pull backend
-            docker compose up -d --remove-orphans
+            docker compose pull signals
+            docker compose up -d signals-db signals --remove-orphans
 
-            # Применяем миграции
-            echo "Applying migrations..."
-            docker compose exec -T backend alembic upgrade head
-
-            # Статус
-            docker compose ps
-            echo "✅ Execution service deployed"
+            docker compose ps signals
+            echo "✅ Signals service deployed"

@@ -1,12 +1,16 @@
 import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const SIGNALS_URL = process.env.NEXT_PUBLIC_SIGNALS_URL || 'http://localhost:8020';
 
 export const api = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
+});
+
+export const signalsApi2 = axios.create({
+  baseURL: SIGNALS_URL,
+  headers: { 'Content-Type': 'application/json' },
 });
 
 // Add auth token to requests
@@ -67,20 +71,20 @@ export const tradesApi = {
   getByBot: (bot_id: number) => api.get(`/api/trades/bot/${bot_id}`),
 };
 
-// Screener API
+// Screener API — signals service
 export const screenerApi = {
-  getLatest: () => api.get('/api/screener/latest'),
-  triggerScan: () => api.post('/api/screener/scan'),
+  getLatest: () => signalsApi2.get('/api/screener/latest'),
+  triggerScan: () => signalsApi2.post('/api/screener/scan'),
 };
 
-// Signals API
+// Signals API — signals service
 export const signalsApi = {
-  getAll: (limit = 100) => api.get('/api/signals/', { params: { limit } }),
+  getAll: (limit = 100) => signalsApi2.get('/api/signals/', { params: { limit } }),
 };
 
-// Trend Signals API
+// Trend Signals API — signals service
 export const trendSignalsApi = {
-  getAll: (limit = 200) => api.get('/api/trend-signals/', { params: { limit } }),
+  getAll: (limit = 200) => signalsApi2.get('/api/trend-signals/', { params: { limit } }),
 };
 
 // Profile API
