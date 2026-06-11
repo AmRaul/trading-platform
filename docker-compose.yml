@@ -14,6 +14,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_postgres"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trading -d trading_db"]
       interval: 5s
@@ -29,6 +33,10 @@ services:
       - redis_data:/data
     networks:
       - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_redis"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -48,6 +56,10 @@ services:
       - ./backend:/app
     networks:
       - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_backend"
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,6 +81,10 @@ services:
       - /app/node_modules
     networks:
       - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_frontend"
     depends_on:
       - backend
     command: npm run dev
@@ -85,7 +101,7 @@ services:
       - trading_network
 
   promtail:
-    image: grafana/promtail:2.9.4
+    image: grafana/promtail:2.8.0
     container_name: trading_promtail
     restart: unless-stopped
     volumes:
@@ -98,11 +114,11 @@ services:
       - loki
 
   grafana:
-    image: grafana/grafana:10.4.0
+    image: grafana/grafana:11.6.0
     container_name: trading_grafana
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:3002:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
@@ -110,6 +126,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_SERVER_ROOT_URL=https://logs.hub-cargo.ru
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-lokiexplore-app
     networks:
       - trading_network
     depends_on:
