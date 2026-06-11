@@ -6,7 +6,6 @@ on:
     paths:
       - 'backend/**'
       - 'frontend/**'
-      - 'docker-compose.yml'
       - '.github/workflows/execution.yml'
   pull_request:
     branches: [main]
