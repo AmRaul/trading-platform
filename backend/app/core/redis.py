@@ -73,3 +73,8 @@ async def get_live_price(symbol: str) -> Optional[float]:
     key = RedisKeys.live_price(symbol)
     price = await redis_client.get(key)
     return float(price) if price else None
+
+
+def price_channel(exchange: str, symbol: str) -> str:
+    """Redis pub/sub channel name for price updates."""
+    return f"prices:{exchange}:{symbol}"

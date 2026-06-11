@@ -1,7 +1,6 @@
 from fastapi import WebSocket, WebSocketDisconnect
 from typing import Dict, Set
-from app.services.bybit import bybit_client
-from app.core.redis import get_live_price, set_live_price
+from app.core.redis import get_redis, price_channel
 from app.services.strategy import StrategyEngine
 from app.core.database import AsyncSessionLocal
 import json
@@ -12,219 +11,215 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Manage WebSocket connections"""
+    """Manage WebSocket connections from browser clients."""
 
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.price_subscribers: Dict[str, Set[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket):
-        """Accept new connection"""
         await websocket.accept()
         self.active_connections.add(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        """Remove connection"""
         self.active_connections.discard(websocket)
-
-        # Remove from all subscriptions
         for symbol in list(self.price_subscribers.keys()):
             self.price_subscribers[symbol].discard(websocket)
             if not self.price_subscribers[symbol]:
                 del self.price_subscribers[symbol]
 
     async def send_personal_message(self, message: dict, websocket: WebSocket):
-        """Send message to specific client"""
         try:
             await websocket.send_json(message)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
     async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients"""
         disconnected = set()
-
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except Exception:
                 disconnected.add(connection)
-
-        # Clean up disconnected clients
         for conn in disconnected:
             self.disconnect(conn)
 
     async def broadcast_price_update(self, symbol: str, price: float):
-        """Broadcast price update to subscribers"""
         if symbol not in self.price_subscribers:
             return
-
-        message = {
-            "type": "price_update",
-            "symbol": symbol,
-            "price": price
-        }
-
+        message = {"type": "price_update", "symbol": symbol, "price": price}
         disconnected = set()
-
         for connection in self.price_subscribers[symbol]:
             try:
                 await connection.send_json(message)
             except Exception:
                 disconnected.add(connection)
-
-        # Clean up
         for conn in disconnected:
             self.price_subscribers[symbol].discard(conn)
 
     async def broadcast_event(self, event_type: str, data: dict):
-        """Broadcast trading events to all clients"""
-        message = {
-            "type": event_type,
-            **data
-        }
-
+        message = {"type": event_type, **data}
         disconnected = set()
-
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
             except Exception:
                 disconnected.add(connection)
-
-        # Clean up
         for conn in disconnected:
             self.disconnect(conn)
 
     def subscribe_to_price(self, symbol: str, websocket: WebSocket):
-        """Subscribe client to price updates"""
         if symbol not in self.price_subscribers:
             self.price_subscribers[symbol] = set()
-
         self.price_subscribers[symbol].add(websocket)
 
 
-# Global connection manager
 manager = ConnectionManager()
 
 
 class PriceStreamManager:
-    """Manage price streams from Bybit"""
+    """
+    Listens to Redis pub/sub price channels published by price-tracker service.
+    Drives strategy engines and broadcasts prices to browser WebSocket clients.
+
+    Channel format: prices:{exchange}:{symbol}
+    Adding a new exchange requires no changes here — price-tracker registers it.
+    """
 
     def __init__(self):
-        self.active_symbols: Set[str] = set()
         self.strategy_engines: Dict[int, StrategyEngine] = {}
-        self.registered_bots: Set[int] = set()  # Track registered bot IDs
+        self.registered_bots: Set[int] = set()
+        # symbol -> set of (exchange, symbol) channels being listened to
+        self._listened_channels: Set[str] = set()
+        self._pubsub_task: asyncio.Task | None = None
+        self._pubsub = None
 
-    async def start_price_stream(self, symbol: str):
-        """Start streaming prices for a symbol"""
-        if symbol in self.active_symbols:
+    async def _ensure_listener(self):
+        if self._pubsub_task and not self._pubsub_task.done():
             return
+        self._pubsub_task = asyncio.create_task(self._listen_loop())
 
-        self.active_symbols.add(symbol)
-
-        # Получаем loop главного потока, чтобы передать его в колбэк pybit
-        loop = asyncio.get_event_loop()
-
-        def on_message(message):
-            asyncio.run_coroutine_threadsafe(
-                self._handle_price_update(symbol, message), loop
-            )
-
-        ws = bybit_client.init_websocket(on_message)
-        bybit_client.subscribe_ticker(symbol, on_message)
-
-        logger.info(f"Started price stream for {symbol}")
-
-    async def _handle_price_update(self, symbol: str, message: dict):
-        """Handle incoming price update"""
+    async def _listen_loop(self):
+        redis = await get_redis()
+        self._pubsub = redis.pubsub()
+        if self._listened_channels:
+            await self._pubsub.subscribe(*self._listened_channels)
+        logger.info(f"[PriceStream] Redis pub/sub listener started, channels: {self._listened_channels}")
         try:
-            if "data" in message:
-                data = message["data"]
-                price = float(data.get("lastPrice", 0))
-
-                if price > 0:
-                    await set_live_price(symbol, price)
+            async for message in self._pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    data = json.loads(message["data"])
+                    exchange = data["exchange"]
+                    symbol = data["symbol"]
+                    price = float(data["price"])
                     await manager.broadcast_price_update(symbol, price)
                     await self._update_strategies(symbol, price)
-
+                except Exception as e:
+                    logger.error(f"[PriceStream] message error: {e}")
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
-            logger.error(f"[WS] Ошибка обработки цены {symbol}: {e}", exc_info=True)
+            logger.error(f"[PriceStream] listener crashed: {e}", exc_info=True)
+        finally:
+            if self._pubsub:
+                await self._pubsub.close()
+
+    async def _subscribe_channel(self, exchange: str, symbol: str):
+        channel = price_channel(exchange, symbol)
+        if channel in self._listened_channels:
+            return
+        self._listened_channels.add(channel)
+        if self._pubsub:
+            await self._pubsub.subscribe(channel)
+        await self._ensure_listener()
 
     async def _update_strategies(self, symbol: str, price: float):
-        """Update all active strategies for this symbol"""
-        # Create new DB session for each price update to avoid stale sessions
         for bot_id in list(self.registered_bots):
-            if bot_id in self.strategy_engines:
-                engine = self.strategy_engines[bot_id]
-                if engine.bot.symbol == symbol:
-                    try:
-                        await engine.on_price_update(price)
-                    except Exception as e:
-                        logger.error(f"Error updating strategy {bot_id}: {e}")
+            engine = self.strategy_engines.get(bot_id)
+            if engine and engine.bot.symbol == symbol:
+                try:
+                    await engine.on_price_update(price)
+                except Exception as e:
+                    logger.error(f"[PriceStream] strategy {bot_id} error: {e}")
 
     async def register_strategy(self, bot_id: int):
-        """Register a strategy engine for price updates"""
-        # Session must stay open for the lifetime of the engine
         db = AsyncSessionLocal()
         engine = StrategyEngine(bot_id, db)
         await engine.initialize()
         self.strategy_engines[bot_id] = engine
         self.registered_bots.add(bot_id)
 
-        # Start price stream for this symbol
-        await self.start_price_stream(engine.bot.symbol)
+        # Subscribe to price channel for this bot's exchange (default: bybit)
+        exchange = getattr(engine.bot, "exchange", "bybit") or "bybit"
+        await self._subscribe_channel(exchange, engine.bot.symbol)
 
-        logger.info(f"Registered strategy for bot {bot_id}, symbol: {engine.bot.symbol}")
+        # Tell price-tracker to start streaming this symbol
+        await _notify_price_tracker("subscribe", exchange, engine.bot.symbol)
+
+        logger.info(f"[PriceStream] Registered bot {bot_id} {engine.bot.symbol} via {exchange}")
 
     def unregister_strategy(self, bot_id: int):
-        """Unregister strategy engine and close its DB session"""
-        if bot_id in self.strategy_engines:
-            engine = self.strategy_engines.pop(bot_id)
+        engine = self.strategy_engines.pop(bot_id, None)
+        if engine:
             asyncio.create_task(engine.db.close())
-        if bot_id in self.registered_bots:
-            self.registered_bots.discard(bot_id)
-        logger.info(f"Unregistered strategy for bot {bot_id}")
+            # Notify price-tracker to stop streaming if no other bot needs this symbol
+            exchange = getattr(engine.bot, "exchange", "bybit") or "bybit"
+            symbol = engine.bot.symbol
+            still_needed = any(
+                e.bot.symbol == symbol
+                for e in self.strategy_engines.values()
+            )
+            if not still_needed:
+                asyncio.create_task(
+                    _notify_price_tracker("unsubscribe", exchange, symbol)
+                )
+        self.registered_bots.discard(bot_id)
+        logger.info(f"[PriceStream] Unregistered bot {bot_id}")
 
     async def restore_active_strategies(self):
-        """
-        Restore active strategies on application startup.
-
-        This finds all bots in PYRAMIDING state with open positions
-        and registers them for price updates.
-        """
         try:
             async with AsyncSessionLocal() as db:
                 from app.models import Bot, Position
                 from sqlalchemy import select, and_
-
-                # Find all bots in PYRAMIDING state with open positions
                 result = await db.execute(
                     select(Bot)
                     .join(Position, Position.bot_id == Bot.id)
-                    .where(
-                        and_(
-                            Bot.state == "PYRAMIDING",
-                            Position.is_open == True
-                        )
-                    )
+                    .where(and_(Bot.state == "PYRAMIDING", Position.is_open == True))
                 )
                 active_bots = result.scalars().all()
-
-                logger.info(f"Restoring {len(active_bots)} active strategies on startup")
-
+                logger.info(f"[PriceStream] Restoring {len(active_bots)} strategies")
                 for bot in active_bots:
                     try:
                         await self.register_strategy(bot.id)
-                        logger.info(f"Restored strategy for bot {bot.id} ({bot.name})")
                     except Exception as e:
-                        logger.error(f"Failed to restore strategy for bot {bot.id}: {e}")
-
-                logger.info(f"Strategy restoration complete: {len(self.registered_bots)} bots registered")
-
+                        logger.error(f"[PriceStream] Failed to restore bot {bot.id}: {e}")
         except Exception as e:
-            logger.error(f"Error restoring active strategies: {e}")
+            logger.error(f"[PriceStream] restore error: {e}")
+
+    async def stop(self):
+        if self._pubsub_task:
+            self._pubsub_task.cancel()
 
 
-# Global price stream manager
+async def _notify_price_tracker(action: str, exchange: str, symbol: str):
+    """Call price-tracker HTTP API to subscribe/unsubscribe a symbol."""
+    import aiohttp
+    from app.core.config import settings
+    url = f"{settings.PRICE_TRACKER_URL}/{action}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            if action == "subscribe":
+                async with session.post(url, json={"exchange": exchange, "symbol": symbol}) as r:
+                    if r.status != 200:
+                        logger.warning(f"[PriceTracker] subscribe {symbol} status {r.status}")
+            else:
+                async with session.delete(url, json={"exchange": exchange, "symbol": symbol}) as r:
+                    if r.status != 200:
+                        logger.warning(f"[PriceTracker] unsubscribe {symbol} status {r.status}")
+    except Exception as e:
+        logger.warning(f"[PriceTracker] notify failed ({action} {symbol}): {e}")
+
+
 price_stream_manager = PriceStreamManager()

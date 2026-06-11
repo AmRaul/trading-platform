@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     ENCRYPTION_KEY: str = ""
 
+    # Price Tracker service URL
+    PRICE_TRACKER_URL: str = "http://price-tracker:8010/subscribe"
+
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000"]
 

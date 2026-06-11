@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI):
     signal_task.cancel()
     trend_scan_task.cancel()
     trend_update_task.cancel()
+    await price_stream_manager.stop()
     logger.info("Shutting down...")
     await close_redis()
 

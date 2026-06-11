@@ -89,6 +89,27 @@ services:
       - backend
     command: npm run dev
 
+  price-tracker:
+    build:
+      context: ./services/price-tracker
+      dockerfile: Dockerfile
+    container_name: trading_price_tracker
+    restart: unless-stopped
+    expose:
+      - "8010"
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
+    networks:
+      - trading_network
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_price_tracker"
+
   loki:
     image: grafana/loki:2.9.4
     container_name: trading_loki
