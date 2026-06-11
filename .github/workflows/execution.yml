@@ -99,7 +99,7 @@ jobs:
               echo "NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}"
               echo "GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}"
               echo "PRICE_TRACKER_URL=http://price-tracker:8010/subscribe"
-              echo "NEXT_PUBLIC_SIGNALS_URL=https://signals.${{ secrets.DOMAIN_BASE }}"
+              echo "NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru"
             } > .env
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
