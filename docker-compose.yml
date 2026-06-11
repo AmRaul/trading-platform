@@ -90,9 +90,7 @@ services:
     command: npm run dev
 
   price-tracker:
-    build:
-      context: ./services/price-tracker
-      dockerfile: Dockerfile
+    image: ${PRICE_TRACKER_IMAGE:-ghcr.io/amraul/trading-platform-price-tracker:latest}
     container_name: trading_price_tracker
     restart: unless-stopped
     expose:
