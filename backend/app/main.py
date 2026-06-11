@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+# screener/signals/trend moved to signals service
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
