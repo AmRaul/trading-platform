@@ -12,6 +12,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - trading_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U trading -d trading_db"]
       interval: 5s
@@ -25,6 +27,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - trading_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,6 +46,8 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    networks:
+      - trading_network
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,10 +67,60 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    networks:
+      - trading_network
     depends_on:
       - backend
     command: npm run dev
 
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: trading_loki
+    restart: unless-stopped
+    expose:
+      - "3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - trading_network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: trading_promtail
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+    networks:
+      - trading_network
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: trading_grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=https://logs.hub-cargo.ru
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    networks:
+      - trading_network
+    depends_on:
+      - loki
+
+networks:
+  trading_network:
+    driver: bridge
+
 volumes:
   postgres_data:
   redis_data:
+  loki_data:
+  grafana_data:
