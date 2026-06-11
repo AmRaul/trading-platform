@@ -111,8 +111,8 @@ services:
     image: ${SIGNALS_IMAGE:-ghcr.io/amraul/trading-platform-signals:latest}
     container_name: trading_signals
     restart: unless-stopped
-    expose:
-      - "8020"
+    ports:
+      - "127.0.0.1:8020:8020"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${SIGNALS_DB_USER:-signals}:${SIGNALS_DB_PASSWORD:-signals123}@signals-db:5432/signals_db
       - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
