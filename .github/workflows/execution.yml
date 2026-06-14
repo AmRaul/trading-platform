@@ -16,11 +16,12 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}-execution
+  BACKEND_IMAGE: ${{ github.repository }}-execution
+  FRONTEND_IMAGE: ${{ github.repository }}-frontend
 
 jobs:
   build:
-    name: Build Docker Image
+    name: Build Docker Images
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,15 +41,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
+      - name: Extract backend metadata
+        id: meta-backend
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push backend image
@@ -57,10 +55,33 @@ jobs:
           context: ./backend
           file: ./backend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Extract frontend metadata
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+          build-args: |
+            NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }}
+            NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }}
+            NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru
 
   deploy:
     name: Deploy to Server
@@ -100,16 +121,12 @@ jobs:
               echo "GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}"
               echo "PRICE_TRACKER_URL=http://price-tracker:8010/subscribe"
               echo "NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru"
+              echo "FRONTEND_IMAGE=ghcr.io/${REPO_LOWERCASE}-frontend:latest"
             } > .env
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            docker compose pull backend
-            docker compose build \
-              --build-arg NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }} \
-              --build-arg NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }} \
-              --build-arg NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru \
-              frontend
+            docker compose pull backend frontend
             docker compose up -d --remove-orphans
 
             # Применяем миграции

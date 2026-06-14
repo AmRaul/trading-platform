@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL
