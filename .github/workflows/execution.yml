@@ -105,7 +105,11 @@ jobs:
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
             docker compose pull backend
-            docker compose build --no-cache frontend
+            docker compose build \
+              --build-arg NEXT_PUBLIC_API_URL=https://${{ secrets.DOMAIN }} \
+              --build-arg NEXT_PUBLIC_WS_URL=wss://${{ secrets.DOMAIN }} \
+              --build-arg NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru \
+              frontend
             docker compose up -d --remove-orphans
 
             # Применяем миграции
