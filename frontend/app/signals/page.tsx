@@ -61,9 +61,9 @@ export default function SignalsPage() {
   const pending = signals.filter((s: Signal) => s.status === 'PENDING');
 
   const winRate = (subset: Signal[]) => {
-    const f = subset.filter(s => s.status === 'FILLED');
+    const f = subset.filter((s: Signal) => s.status === 'FILLED');
     if (!f.length) return '—';
-    return (f.filter(s => (s.pnl_60m ?? 0) > 0).length / f.length * 100).toFixed(0) + '%';
+    return (f.filter((s: Signal) => (s.pnl_60m ?? 0) > 0).length / f.length * 100).toFixed(0) + '%';
   };
 
   const momentum = signals.filter((s: Signal) => (s.strategy ?? 'MOMENTUM') === 'MOMENTUM');
@@ -91,17 +91,17 @@ export default function SignalsPage() {
           <div className="bg-gray-800 rounded-lg p-4 border border-blue-900 border-2">
             <p className="text-blue-400 text-sm">MOMENTUM win rate</p>
             <p className="text-2xl font-bold mt-1 text-blue-300">{winRate(momentum)}</p>
-            <p className="text-gray-500 text-xs mt-1">{momentum.filter(s => s.status === 'FILLED').length} завершено</p>
+            <p className="text-gray-500 text-xs mt-1">{momentum.filter((s: Signal) => s.status === 'FILLED').length} завершено</p>
           </div>
           <div className="bg-gray-800 rounded-lg p-4 border border-purple-900 border-2">
             <p className="text-purple-400 text-sm">REVERSAL win rate</p>
             <p className="text-2xl font-bold mt-1 text-purple-300">{winRate(reversal)}</p>
-            <p className="text-gray-500 text-xs mt-1">{reversal.filter(s => s.status === 'FILLED').length} завершено</p>
+            <p className="text-gray-500 text-xs mt-1">{reversal.filter((s: Signal) => s.status === 'FILLED').length} завершено</p>
           </div>
           <div className="bg-gray-800 rounded-lg p-4 border border-green-900 border-2">
             <p className="text-green-400 text-sm">BREAKOUT win rate</p>
             <p className="text-2xl font-bold mt-1 text-green-300">{winRate(breakout)}</p>
-            <p className="text-gray-500 text-xs mt-1">{breakout.filter(s => s.status === 'FILLED').length} завершено</p>
+            <p className="text-gray-500 text-xs mt-1">{breakout.filter((s: Signal) => s.status === 'FILLED').length} завершено</p>
           </div>
         </div>
 
