@@ -102,6 +102,9 @@ jobs:
           script: |
             cd /opt/trading-platform
 
+            git fetch origin main
+            git reset --hard origin/main
+
             REPO_LOWERCASE=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             # Создаём .env из secrets
