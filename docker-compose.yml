@@ -71,13 +71,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: trading_frontend
-    env_file:
-      - .env
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     networks:
       - trading_network
     logging:
@@ -86,7 +81,6 @@ services:
         tag: "trading_frontend"
     depends_on:
       - backend
-    command: npm run dev
 
   signals-db:
     image: postgres:16-alpine
