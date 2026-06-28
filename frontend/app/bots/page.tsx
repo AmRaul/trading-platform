@@ -21,6 +21,14 @@ export default function BotsPage() {
     refetchInterval: 5000,
   });
 
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
+  const accountName = (id: number | null) =>
+    id ? (accounts.find((a: any) => a.id === id)?.name ?? `#${id}`) : null;
+
   // Seed position store from REST response and subscribe to WS
   useEffect(() => {
     if (!bots) return;
@@ -167,6 +175,13 @@ export default function BotsPage() {
                   ${bot.total_pnl.toFixed(2)}
                 </span>
               </div>
+
+              {/* Account */}
+              {bot.account_id && (
+                <div className="text-xs text-gray-500 mb-1">
+                  <span className="text-blue-400">{accountName(bot.account_id)}</span>
+                </div>
+              )}
 
               {/* Config row */}
               <div className="flex gap-2 text-xs text-gray-500 mb-2">
