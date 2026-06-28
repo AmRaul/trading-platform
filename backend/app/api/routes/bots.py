@@ -80,6 +80,7 @@ async def get_bots(
             state=bot.state,
             is_active=bot.is_active,
             total_pnl=bot.total_pnl,
+            account_id=bot.account_id,
             created_at=bot.created_at,
             started_at=bot.started_at,
             open_position=open_position,
@@ -131,6 +132,7 @@ async def create_bot(
     """Create new bot"""
     bot = Bot(
         user_id=current_user.id,
+        account_id=bot_data.account_id,
         name=bot_data.name,
         symbol=bot_data.symbol,
         side=bot_data.side,
@@ -176,6 +178,9 @@ async def update_bot(
 
     if bot_data.is_active is not None:
         bot.is_active = bot_data.is_active
+
+    if bot_data.account_id is not None:
+        bot.account_id = bot_data.account_id
 
     await db.commit()
     await db.refresh(bot)

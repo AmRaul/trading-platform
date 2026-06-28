@@ -66,6 +66,12 @@ export default function Navbar() {
               >
                 Trend
               </Link>
+              <Link
+                href="/accounts"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Accounts
+              </Link>
             </div>
           </div>
 

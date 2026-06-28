@@ -3,7 +3,7 @@ from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Bot, Position, Order
-from app.models.user_credential import UserCredential
+from app.models.cryptorg_account import CryptorgAccount
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.adapters.cryptorg_executor import CryptorgExecutorAdapter
@@ -50,15 +50,15 @@ class StrategyEngine:
         if not self.bot:
             raise ValueError(f"Bot {self.bot_id} not found")
 
-        # Load user credential and build executor with the correct webhook URL
-        credential = None
-        if self.bot.user_id:
-            cred_result = await self.db.execute(
-                select(UserCredential).where(UserCredential.user_id == self.bot.user_id)
+        # Load cryptorg account and build executor with the correct webhook URL
+        account = None
+        if self.bot.account_id:
+            acc_result = await self.db.execute(
+                select(CryptorgAccount).where(CryptorgAccount.id == self.bot.account_id)
             )
-            credential = cred_result.scalar_one_or_none()
+            account = acc_result.scalar_one_or_none()
 
-        executor = CryptorgExecutorAdapter(get_cryptorg_client(credential))
+        executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
 
         self._open_uc = OpenPositionUseCase(executor, self._market, self._publisher)
         self._close_uc = ClosePositionUseCase(executor, self._publisher)

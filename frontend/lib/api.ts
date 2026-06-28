@@ -87,9 +87,12 @@ export const trendSignalsApi = {
   getAll: (limit = 200) => signalsApi2.get('/api/trend-signals/', { params: { limit } }),
 };
 
-// Profile API
-export const profileApi = {
-  getCredentials: () => api.get('/api/profile/credentials'),
-  saveCredentials: (data: { exchange: string; webhook_url: string; api_key?: string; api_secret?: string }) =>
-    api.put('/api/profile/credentials', data),
+// Accounts API
+export const accountsApi = {
+  getAll: () => api.get('/api/accounts/'),
+  create: (data: { name: string; webhook_url: string; api_key?: string; api_secret?: string }) =>
+    api.post('/api/accounts/', data),
+  update: (id: number, data: { name?: string; webhook_url?: string; api_key?: string; api_secret?: string }) =>
+    api.put(`/api/accounts/${id}`, data),
+  delete: (id: number) => api.delete(`/api/accounts/${id}`),
 };

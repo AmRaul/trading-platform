@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { botsApi, tradingApi } from '@/lib/api';
+import { botsApi, tradingApi, accountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import { Plus, Play, Square, Trash2, Settings } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
@@ -309,6 +309,7 @@ function PositionPanel({ bot }: { bot: any }) {
 
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState<number | null>(bot.account_id ?? null);
   const [formData, setFormData] = useState({
     name: bot.name,
     symbol: bot.symbol,
@@ -333,6 +334,11 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     cycle: bot.config.cycle ?? false,
   });
 
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data: any) => botsApi.update(bot.id, data),
     onSuccess: () => {
@@ -345,7 +351,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    updateMutation.mutate({ name, symbol, side, config });
+    updateMutation.mutate({ name, symbol, side, config, account_id: accountId });
   };
 
   return (
@@ -386,6 +392,19 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
               <input type="text" value={formData.symbol}
                 onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+              <select
+                value={accountId ?? ''}
+                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+              >
+                <option value="">— Без аккаунта —</option>
+                {accounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>
@@ -544,6 +563,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
 
 function CreateBotModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     symbol: 'BTCUSDT',
@@ -568,6 +588,11 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     cycle: false,
   });
 
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: any) => botsApi.create(data),
     onSuccess: () => {
@@ -589,7 +614,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    createMutation.mutate({ name, symbol, side, config });
+    createMutation.mutate({ name, symbol, side, config, account_id: accountId });
   };
 
   return (
@@ -639,6 +664,20 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               <input type="text" value={formData.symbol}
                 onChange={(e) => setFormData({ ...formData, symbol: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+              <select
+                value={accountId ?? ''}
+                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+              >
+                <option value="">— Без аккаунта —</option>
+                {accounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                ))}
+              </select>
             </div>
 
             <div>
