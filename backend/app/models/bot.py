@@ -16,8 +16,9 @@ class Bot(Base):
     config = Column(JSON, nullable=False)
 
     # State
-    state = Column(String, default="IDLE")  # IDLE, ENTRY, PYRAMIDING, EXIT
+    state = Column(String, default="IDLE")  # IDLE, WAITING, ENTRY, PYRAMIDING, EXIT
     is_active = Column(Boolean, default=False)
+    limit_entry_price = Column(Float, nullable=True)
 
     # Stats
     total_pnl = Column(Float, default=0.0)

@@ -126,6 +126,7 @@ class BotResponse(BaseModel):
     is_active: bool
     total_pnl: float
     account_id: Optional[int] = None
+    limit_entry_price: Optional[float] = None
     created_at: datetime
     started_at: Optional[datetime]
     open_position: Optional[OpenPositionData] = None

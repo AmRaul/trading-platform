@@ -56,7 +56,8 @@ class ScanMarketUseCase:
         try:
             from app.adapters.bybit_market_data import BybitMarketDataAdapter
             adapter = BybitMarketDataAdapter()
-            tickers = adapter.get_all_tickers()
+            loop = asyncio.get_event_loop()
+            tickers = await loop.run_in_executor(None, adapter.get_all_tickers)
             return tickers[:TOP_N]
         except Exception as e:
             logger.error(f"Screener: failed to get tickers: {e}")

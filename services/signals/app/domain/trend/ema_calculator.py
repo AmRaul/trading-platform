@@ -1,13 +1,17 @@
+import numpy as np
 from typing import List
 
 
 def ema(values: List[float], period: int) -> List[float]:
     if len(values) < period:
         return []
-    import pandas as pd
-    s = pd.Series(values)
-    result = s.ewm(span=period, adjust=False).mean()
-    return result.tolist()
+    arr = np.array(values, dtype=float)
+    k = 2.0 / (period + 1)
+    out = np.empty(len(arr))
+    out[0] = arr[0]
+    for i in range(1, len(arr)):
+        out[i] = arr[i] * k + out[i - 1] * (1 - k)
+    return out.tolist()
 
 
 def ema21(closes: List[float]) -> float:

@@ -5,15 +5,10 @@ from sqlalchemy import select
 
 from app.models.signal_log import SignalLog
 from app.ports.market_data import MarketData
+from app.domain.shared.pnl import calc_pnl
 
 logger = logging.getLogger(__name__)
 STOP_LOSS_PCT = -4.0
-
-
-def _pnl(side: str, entry: float, current: float) -> float:
-    if side == "LONG":
-        return round((current - entry) / entry * 100, 2)
-    return round((entry - current) / entry * 100, 2)
 
 
 class UpdateSignalPricesUseCase:
@@ -37,7 +32,7 @@ class UpdateSignalPricesUseCase:
             current_price = float(ticker.get("lastPrice", 0))
             if not current_price:
                 continue
-            current_pnl = _pnl(row.side, row.entry_price, current_price)
+            current_pnl = calc_pnl(row.side, row.entry_price, current_price)
             if current_pnl <= STOP_LOSS_PCT:
                 if row.price_15m is None:
                     row.price_15m, row.pnl_15m = current_price, current_pnl

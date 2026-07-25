@@ -81,6 +81,7 @@ async def get_bots(
             is_active=bot.is_active,
             total_pnl=bot.total_pnl,
             account_id=bot.account_id,
+            limit_entry_price=bot.limit_entry_price,
             created_at=bot.created_at,
             started_at=bot.started_at,
             open_position=open_position,

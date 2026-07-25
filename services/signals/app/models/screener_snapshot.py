@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Index
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -23,3 +23,7 @@ class ScreenerSnapshot(Base):
     direction = Column(String, nullable=False)
     price_range_pct = Column(Float, nullable=True)
     last_price = Column(Float, nullable=False)
+
+    __table_args__ = (
+        Index("ix_screener_scanned_at", "scanned_at"),
+    )

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { botsApi, tradingApi, accountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Plus, Play, Square, Trash2, Settings } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Settings, Clock, X } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
 
@@ -12,6 +12,8 @@ export default function BotsPage() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editBot, setEditBot] = useState<any>(null);
+  const [limitBot, setLimitBot] = useState<any>(null);
+  const [limitPrice, setLimitPrice] = useState('');
   const { setPosition, updatePositionFields, clearPosition } = usePositionStore();
   const updatePrice = usePriceStore((s) => s.updatePrice);
 
@@ -122,8 +124,29 @@ export default function BotsPage() {
     },
   });
 
+  const limitMutation = useMutation({
+    mutationFn: ({ bot_id, limit_price }: { bot_id: number; limit_price: number }) =>
+      tradingApi.limitEntry(bot_id, limit_price),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bots'] });
+      setLimitBot(null);
+      setLimitPrice('');
+    },
+  });
+
+  const cancelLimitMutation = useMutation({
+    mutationFn: (bot_id: number) => tradingApi.cancelLimit(bot_id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
+  });
+
   const handleEntry = (bot: any) => {
     entryMutation.mutate(bot.id);
+  };
+
+  const handleLimitSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!limitBot || !limitPrice) return;
+    limitMutation.mutate({ bot_id: limitBot.id, limit_price: parseFloat(limitPrice) });
   };
 
   return (
@@ -196,13 +219,37 @@ export default function BotsPage() {
               {/* Actions */}
               <div className="flex gap-1.5 mt-2">
                 {bot.state === 'IDLE' ? (
-                  <button
-                    onClick={() => handleEntry(bot)}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs"
-                  >
-                    <Play size={12} />
-                    Войти
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleEntry(bot)}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs"
+                    >
+                      <Play size={12} />
+                      Войти
+                    </button>
+                    <button
+                      onClick={() => { setLimitBot(bot); setLimitPrice(''); }}
+                      className="flex items-center justify-center gap-1 px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs"
+                      title="Лимитный вход"
+                    >
+                      <Clock size={12} />
+                      Лимит
+                    </button>
+                  </>
+                ) : bot.state === 'WAITING' ? (
+                  <>
+                    <div className="flex-1 flex items-center gap-1 px-2 py-1 bg-yellow-900/50 border border-yellow-700 rounded text-xs text-yellow-300">
+                      <Clock size={12} />
+                      Жду ${bot.limit_entry_price?.toFixed(4) ?? '—'}
+                    </div>
+                    <button
+                      onClick={() => cancelLimitMutation.mutate(bot.id)}
+                      className="flex items-center justify-center px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                      title="Отменить лимит"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
                 ) : (
                   <button
                     onClick={() => closeMutation.mutate(bot.id)}
@@ -242,6 +289,48 @@ export default function BotsPage() {
       )}
       {editBot && (
         <EditBotModal bot={editBot} onClose={() => setEditBot(null)} />
+      )}
+      {limitBot && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-sm p-6">
+            <h2 className="text-base font-bold mb-1">Лимитный вход — {limitBot.name}</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              {limitBot.symbol.replace('USDT', '')} {limitBot.side === 'LONG' ? '↗ LONG' : '↘ SHORT'} — вход когда цена{' '}
+              {limitBot.side === 'LONG' ? 'опустится до' : 'поднимется до'}
+            </p>
+            <form onSubmit={handleLimitSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Целевая цена (USDT)</label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  autoFocus
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setLimitBot(null); setLimitPrice(''); }}
+                  className="flex-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={limitMutation.isPending || !limitPrice}
+                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium"
+                >
+                  {limitMutation.isPending ? 'Установка...' : 'Установить'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

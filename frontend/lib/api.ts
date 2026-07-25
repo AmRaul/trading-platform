@@ -51,6 +51,12 @@ export const tradingApi = {
   manualEntry: (bot_id: number, account_balance: number) =>
     api.post('/api/trading/entry', { bot_id, account_balance }),
 
+  limitEntry: (bot_id: number, limit_price: number) =>
+    api.post('/api/trading/entry/limit', { bot_id, limit_price }),
+
+  cancelLimit: (bot_id: number) =>
+    api.post('/api/trading/entry/cancel', { bot_id }),
+
   manualClose: (bot_id: number) =>
     api.post('/api/trading/close', { bot_id }),
 };
@@ -85,6 +91,39 @@ export const signalsApi = {
 // Trend Signals API — signals service
 export const trendSignalsApi = {
   getAll: (limit = 200) => signalsApi2.get('/api/trend-signals/', { params: { limit } }),
+};
+
+// Signal Strategies API — signals service
+export const signalStrategiesApi = {
+  getAll: () => signalsApi2.get('/api/signal-strategies/'),
+  create: (data: {
+    name: string;
+    range_min?: number | null;
+    range_max?: number | null;
+    change_min?: number | null;
+    change_max?: number | null;
+    vol_1h_min?: number | null;
+    side: string;
+    description?: string;
+  }) => signalsApi2.post('/api/signal-strategies/', data),
+  update: (id: number, data: Partial<{
+    range_min: number | null;
+    range_max: number | null;
+    change_min: number | null;
+    change_max: number | null;
+    vol_1h_min: number | null;
+    side: string;
+    description: string;
+    is_active: boolean;
+  }>) => signalsApi2.patch(`/api/signal-strategies/${id}`, data),
+  delete: (id: number) => signalsApi2.delete(`/api/signal-strategies/${id}`),
+};
+
+// Trend Symbols API — signals service
+export const trendSymbolsApi = {
+  getAll: () => signalsApi2.get('/api/trend-symbols/'),
+  add: (symbol: string) => signalsApi2.post('/api/trend-symbols/', { symbol }),
+  remove: (id: number) => signalsApi2.delete(`/api/trend-symbols/${id}`),
 };
 
 // Accounts API
