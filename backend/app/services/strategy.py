@@ -3,7 +3,7 @@ from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Bot, Position, Order
-from app.models.user_credential import UserCredential
+from app.models.cryptorg_account import CryptorgAccount
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.adapters.cryptorg_executor import CryptorgExecutorAdapter
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class BotState(str, Enum):
     IDLE = "IDLE"
+    WAITING = "WAITING"
     ENTRY = "ENTRY"
     PYRAMIDING = "PYRAMIDING"
     EXIT = "EXIT"
@@ -39,6 +40,7 @@ class StrategyEngine:
         self.current_state = BotState.IDLE
         self._is_adding_order = False
         self._is_closing = False
+        self._is_entering = False
         self._last_tick_log = 0.0
 
         self._market = BybitMarketDataAdapter()
@@ -50,15 +52,15 @@ class StrategyEngine:
         if not self.bot:
             raise ValueError(f"Bot {self.bot_id} not found")
 
-        # Load user credential and build executor with the correct webhook URL
-        credential = None
-        if self.bot.user_id:
-            cred_result = await self.db.execute(
-                select(UserCredential).where(UserCredential.user_id == self.bot.user_id)
+        # Load cryptorg account and build executor with the correct webhook URL
+        account = None
+        if self.bot.account_id:
+            acc_result = await self.db.execute(
+                select(CryptorgAccount).where(CryptorgAccount.id == self.bot.account_id)
             )
-            credential = cred_result.scalar_one_or_none()
+            account = acc_result.scalar_one_or_none()
 
-        executor = CryptorgExecutorAdapter(get_cryptorg_client(credential))
+        executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
 
         self._open_uc = OpenPositionUseCase(executor, self._market, self._publisher)
         self._close_uc = ClosePositionUseCase(executor, self._publisher)
@@ -102,7 +104,86 @@ class StrategyEngine:
             logger.error(f"Error in manual_entry: {e}")
             return {"success": False, "error": str(e)}
 
+    async def set_limit_entry(self, limit_price: float) -> Dict:
+        if self.current_state != BotState.IDLE:
+            return {"success": False, "error": "Bot not in IDLE state"}
+        try:
+            self.bot.limit_entry_price = limit_price
+            self.bot.state = BotState.WAITING
+            await self.db.commit()
+            await self.db.refresh(self.bot)
+            self.current_state = BotState.WAITING
+
+            from app.services.websocket import price_stream_manager
+            await price_stream_manager.register_strategy(self.bot_id)
+
+            logger.info(
+                f"[WAITING] bot={self.bot_id} {self.bot.symbol} {self.bot.side} "
+                f"— waiting for price {limit_price}"
+            )
+            return {"success": True, "limit_price": limit_price}
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in set_limit_entry: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def cancel_limit_entry(self) -> Dict:
+        if self.current_state != BotState.WAITING:
+            return {"success": False, "error": "Bot not in WAITING state"}
+        try:
+            self.bot.limit_entry_price = None
+            self.bot.state = BotState.IDLE
+            await self.db.commit()
+            await self.db.refresh(self.bot)
+            self.current_state = BotState.IDLE
+
+            from app.services.websocket import price_stream_manager
+            price_stream_manager.unregister_strategy(self.bot_id)
+
+            logger.info(f"[CANCEL_LIMIT] bot={self.bot_id} limit entry cancelled")
+            return {"success": True}
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in cancel_limit_entry: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _execute_entry(self):
+        if self._is_entering:
+            return
+        self._is_entering = True
+        try:
+            result = await self._open_uc.execute(self.bot, self.calculator, self.db)
+            if result["success"]:
+                self.position = result.pop("position")
+                self.bot.limit_entry_price = None
+                self.bot.state = BotState.PYRAMIDING
+                await self.db.commit()
+                self.current_state = BotState.PYRAMIDING
+                logger.info(
+                    f"[LIMIT_ENTRY] bot={self.bot_id} {self.bot.symbol} "
+                    f"triggered @ {self.position.average_price}"
+                )
+            else:
+                logger.error(f"[LIMIT_ENTRY] failed: {result.get('error')}")
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in _execute_entry: {e}")
+        finally:
+            self._is_entering = False
+
     async def on_price_update(self, current_price: float):
+        # Handle WAITING state — check if limit price is hit
+        if self.current_state == BotState.WAITING:
+            limit_price = self.bot.limit_entry_price
+            if limit_price:
+                triggered = (
+                    (self.bot.side == "LONG" and current_price <= limit_price) or
+                    (self.bot.side == "SHORT" and current_price >= limit_price)
+                )
+                if triggered:
+                    await self._execute_entry()
+            return
+
         if self.current_state != BotState.PYRAMIDING:
             return
         if not self.position or not self.position.is_open:

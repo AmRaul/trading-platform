@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Index
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -26,3 +26,8 @@ class TrendSignalLog(Base):
     peak_pnl_pct = Column(Float, nullable=True)
     pyramid_count = Column(Integer, default=0)
     status = Column(String, nullable=False, default="OPEN")
+
+    __table_args__ = (
+        Index("ix_trend_symbol_side_status", "symbol", "side", "status"),
+        Index("ix_trend_status_entry_time", "status", "entry_time"),
+    )

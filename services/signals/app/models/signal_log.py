@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Index
 from sqlalchemy.sql import func
 from app.core.database import Base
 
@@ -25,3 +25,8 @@ class SignalLog(Base):
     pnl_30m = Column(Float, nullable=True)
     pnl_60m = Column(Float, nullable=True)
     status = Column(String, nullable=False, default="PENDING")
+
+    __table_args__ = (
+        Index("ix_signal_log_status_entry_time", "status", "entry_time"),
+        Index("ix_signal_log_symbol_strategy_status", "symbol", "strategy", "status"),
+    )

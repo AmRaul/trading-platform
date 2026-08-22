@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.domain.trend.ema_calculator import ema21_series
+from app.domain.shared.pnl import calc_pnl
 from app.models.trend_signal_log import TrendSignalLog
 from app.ports.market_data import MarketData
 
@@ -33,11 +34,9 @@ class UpdateTrendSignalsUseCase:
                 current = float(ticker.get("lastPrice", 0))
                 if not current:
                     continue
-                pnl = ((current - row.entry_price) / row.entry_price * 100
-                       if row.side == "LONG"
-                       else (row.entry_price - current) / row.entry_price * 100)
+                pnl = calc_pnl(row.side, row.entry_price, current)
                 if pnl > (row.peak_pnl_pct or 0):
-                    row.peak_pnl_pct = round(pnl, 2)
+                    row.peak_pnl_pct = pnl
                 stop_hit = (
                     (row.side == "LONG" and current <= row.stop_price) or
                     (row.side == "SHORT" and current >= row.stop_price)
@@ -46,7 +45,7 @@ class UpdateTrendSignalsUseCase:
                     row.exit_price = current
                     row.exit_time = datetime.now(timezone.utc)
                     row.exit_reason = "STOP"
-                    row.pnl_pct = round(pnl, 2)
+                    row.pnl_pct = pnl
                     row.duration_hrs = _elapsed_hours(row.entry_time)
                     row.status = "CLOSED"
                     continue
@@ -64,7 +63,7 @@ class UpdateTrendSignalsUseCase:
                             row.exit_price = current
                             row.exit_time = datetime.now(timezone.utc)
                             row.exit_reason = "EMA_EXIT"
-                            row.pnl_pct = round(pnl, 2)
+                            row.pnl_pct = pnl
                             row.duration_hrs = _elapsed_hours(row.entry_time)
                             row.status = "CLOSED"
             except Exception as e:

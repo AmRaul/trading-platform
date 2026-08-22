@@ -8,6 +8,7 @@ class Bot(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    account_id = Column(Integer, ForeignKey("cryptorg_accounts.id"), nullable=True)
     name = Column(String, nullable=False)
     symbol = Column(String, nullable=False, index=True)  # e.g. BTCUSDT
     side = Column(String, nullable=False)  # LONG or SHORT
@@ -15,8 +16,9 @@ class Bot(Base):
     config = Column(JSON, nullable=False)
 
     # State
-    state = Column(String, default="IDLE")  # IDLE, ENTRY, PYRAMIDING, EXIT
+    state = Column(String, default="IDLE")  # IDLE, WAITING, ENTRY, PYRAMIDING, EXIT
     is_active = Column(Boolean, default=False)
+    limit_entry_price = Column(Float, nullable=True)
 
     # Stats
     total_pnl = Column(Float, default=0.0)

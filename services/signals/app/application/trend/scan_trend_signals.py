@@ -5,14 +5,10 @@ from sqlalchemy import select
 
 from app.domain.trend.trend_detector import TrendDetector
 from app.models.trend_signal_log import TrendSignalLog
+from app.models.trend_symbol import TrendSymbol
 from app.ports.market_data import MarketData
 
 logger = logging.getLogger(__name__)
-
-TREND_SYMBOLS = [
-    "SOLUSDT", "AVAXUSDT", "LINKUSDT",
-    "ETHUSDT", "BNBUSDT", "DOTUSDT", "AAVEUSDT",
-]
 
 detector = TrendDetector()
 
@@ -22,6 +18,14 @@ class ScanTrendSignalsUseCase:
         self.market_data = market_data
 
     async def execute(self, db: AsyncSession) -> int:
+        symbols_result = await db.execute(
+            select(TrendSymbol.symbol).where(TrendSymbol.is_active == True)
+        )
+        symbols = [row[0] for row in symbols_result.all()]
+        if not symbols:
+            logger.warning("[TREND] No active symbols configured")
+            return 0
+
         logged = 0
         semaphore = asyncio.Semaphore(3)
 
@@ -58,7 +62,7 @@ class ScanTrendSignalsUseCase:
                 except Exception as e:
                     logger.error(f"[TREND] Error scanning {symbol}: {e}")
 
-        await asyncio.gather(*[scan_one(s) for s in TREND_SYMBOLS])
+        await asyncio.gather(*[scan_one(s) for s in symbols])
         if logged:
             await db.commit()
         return logged

@@ -1,0 +1,18 @@
+services:
+  backend:
+    image: trading-platform-execution:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  signals:
+    image: trading-platform-signals:local
+    build:
+      context: ./services/signals
+      dockerfile: Dockerfile
+
+  price-tracker:
+    image: trading-platform-price-tracker:local
+    build:
+      context: ./services/price-tracker
+      dockerfile: Dockerfile

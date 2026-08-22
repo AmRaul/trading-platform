@@ -61,10 +61,28 @@ export default function Navbar() {
                 Signals
               </Link>
               <Link
+                href="/signal-strategies"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Strategies
+              </Link>
+              <Link
                 href="/trend-signals"
                 className="px-3 py-2 rounded hover:bg-gray-700"
               >
                 Trend
+              </Link>
+              <Link
+                href="/trend-symbols"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Symbols
+              </Link>
+              <Link
+                href="/accounts"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Accounts
               </Link>
             </div>
           </div>

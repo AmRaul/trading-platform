@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { botsApi, tradingApi } from '@/lib/api';
+import { botsApi, tradingApi, accountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Plus, Play, Square, Trash2, Settings } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Settings, Clock, X } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
 
@@ -12,6 +12,8 @@ export default function BotsPage() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editBot, setEditBot] = useState<any>(null);
+  const [limitBot, setLimitBot] = useState<any>(null);
+  const [limitPrice, setLimitPrice] = useState('');
   const { setPosition, updatePositionFields, clearPosition } = usePositionStore();
   const updatePrice = usePriceStore((s) => s.updatePrice);
 
@@ -20,6 +22,14 @@ export default function BotsPage() {
     queryFn: async () => (await botsApi.getAll()).data,
     refetchInterval: 5000,
   });
+
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
+  const accountName = (id: number | null) =>
+    id ? (accounts.find((a: any) => a.id === id)?.name ?? `#${id}`) : null;
 
   // Seed position store from REST response and subscribe to WS
   useEffect(() => {
@@ -114,8 +124,29 @@ export default function BotsPage() {
     },
   });
 
+  const limitMutation = useMutation({
+    mutationFn: ({ bot_id, limit_price }: { bot_id: number; limit_price: number }) =>
+      tradingApi.limitEntry(bot_id, limit_price),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bots'] });
+      setLimitBot(null);
+      setLimitPrice('');
+    },
+  });
+
+  const cancelLimitMutation = useMutation({
+    mutationFn: (bot_id: number) => tradingApi.cancelLimit(bot_id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
+  });
+
   const handleEntry = (bot: any) => {
     entryMutation.mutate(bot.id);
+  };
+
+  const handleLimitSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!limitBot || !limitPrice) return;
+    limitMutation.mutate({ bot_id: limitBot.id, limit_price: parseFloat(limitPrice) });
   };
 
   return (
@@ -168,6 +199,13 @@ export default function BotsPage() {
                 </span>
               </div>
 
+              {/* Account */}
+              {bot.account_id && (
+                <div className="text-xs text-gray-500 mb-1">
+                  <span className="text-blue-400">{accountName(bot.account_id)}</span>
+                </div>
+              )}
+
               {/* Config row */}
               <div className="flex gap-2 text-xs text-gray-500 mb-2">
                 <span>{bot.config.leverage}x</span>
@@ -181,13 +219,37 @@ export default function BotsPage() {
               {/* Actions */}
               <div className="flex gap-1.5 mt-2">
                 {bot.state === 'IDLE' ? (
-                  <button
-                    onClick={() => handleEntry(bot)}
-                    className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs"
-                  >
-                    <Play size={12} />
-                    Войти
-                  </button>
+                  <>
+                    <button
+                      onClick={() => handleEntry(bot)}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs"
+                    >
+                      <Play size={12} />
+                      Войти
+                    </button>
+                    <button
+                      onClick={() => { setLimitBot(bot); setLimitPrice(''); }}
+                      className="flex items-center justify-center gap-1 px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs"
+                      title="Лимитный вход"
+                    >
+                      <Clock size={12} />
+                      Лимит
+                    </button>
+                  </>
+                ) : bot.state === 'WAITING' ? (
+                  <>
+                    <div className="flex-1 flex items-center gap-1 px-2 py-1 bg-yellow-900/50 border border-yellow-700 rounded text-xs text-yellow-300">
+                      <Clock size={12} />
+                      Жду ${bot.limit_entry_price?.toFixed(4) ?? '—'}
+                    </div>
+                    <button
+                      onClick={() => cancelLimitMutation.mutate(bot.id)}
+                      className="flex items-center justify-center px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                      title="Отменить лимит"
+                    >
+                      <X size={13} />
+                    </button>
+                  </>
                 ) : (
                   <button
                     onClick={() => closeMutation.mutate(bot.id)}
@@ -227,6 +289,48 @@ export default function BotsPage() {
       )}
       {editBot && (
         <EditBotModal bot={editBot} onClose={() => setEditBot(null)} />
+      )}
+      {limitBot && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 w-full max-w-sm p-6">
+            <h2 className="text-base font-bold mb-1">Лимитный вход — {limitBot.name}</h2>
+            <p className="text-xs text-gray-400 mb-4">
+              {limitBot.symbol.replace('USDT', '')} {limitBot.side === 'LONG' ? '↗ LONG' : '↘ SHORT'} — вход когда цена{' '}
+              {limitBot.side === 'LONG' ? 'опустится до' : 'поднимется до'}
+            </p>
+            <form onSubmit={handleLimitSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Целевая цена (USDT)</label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  autoFocus
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setLimitBot(null); setLimitPrice(''); }}
+                  className="flex-1 px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={limitMutation.isPending || !limitPrice}
+                  className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium"
+                >
+                  {limitMutation.isPending ? 'Установка...' : 'Установить'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -309,6 +413,7 @@ function PositionPanel({ bot }: { bot: any }) {
 
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState<number | null>(bot.account_id ?? null);
   const [formData, setFormData] = useState({
     name: bot.name,
     symbol: bot.symbol,
@@ -333,6 +438,11 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     cycle: bot.config.cycle ?? false,
   });
 
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data: any) => botsApi.update(bot.id, data),
     onSuccess: () => {
@@ -345,7 +455,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    updateMutation.mutate({ name, symbol, side, config });
+    updateMutation.mutate({ name, symbol, side, config, account_id: accountId });
   };
 
   return (
@@ -386,6 +496,19 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
               <input type="text" value={formData.symbol}
                 onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+              <select
+                value={accountId ?? ''}
+                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+              >
+                <option value="">— Без аккаунта —</option>
+                {accounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>
@@ -544,6 +667,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
 
 function CreateBotModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [accountId, setAccountId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     symbol: 'BTCUSDT',
@@ -568,6 +692,11 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     cycle: false,
   });
 
+  const { data: accounts = [] } = useQuery<any[]>({
+    queryKey: ['accounts'],
+    queryFn: async () => (await accountsApi.getAll()).data,
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: any) => botsApi.create(data),
     onSuccess: () => {
@@ -589,7 +718,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    createMutation.mutate({ name, symbol, side, config });
+    createMutation.mutate({ name, symbol, side, config, account_id: accountId });
   };
 
   return (
@@ -639,6 +768,20 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               <input type="text" value={formData.symbol}
                 onChange={(e) => setFormData({ ...formData, symbol: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+              <select
+                value={accountId ?? ''}
+                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+              >
+                <option value="">— Без аккаунта —</option>
+                {accounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                ))}
+              </select>
             </div>
 
             <div>
