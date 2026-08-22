@@ -94,13 +94,10 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center space-x-2">
-            <Link
-              href="/profile"
-              className="flex items-center gap-1.5 px-3 py-2 rounded hover:bg-gray-700 text-gray-400 hover:text-white text-sm"
-            >
+            <span className="flex items-center gap-1.5 px-3 py-2 text-gray-400 text-sm">
               <User size={16} />
               {user?.username}
-            </Link>
+            </span>
             <button
               onClick={handleLogout}
               className="p-2 rounded hover:bg-gray-700"
