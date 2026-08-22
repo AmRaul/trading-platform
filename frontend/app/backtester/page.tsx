@@ -95,7 +95,11 @@ function ElapsedTimer({ startTime }: { startTime: string }) {
     return () => clearInterval(id);
   }, []);
 
-  const elapsedSec = Math.max(0, Math.floor((now - new Date(startTime).getTime()) / 1000));
+  // Бэкенд отдаёт naive datetime.isoformat() без указания зоны (сервер в UTC) —
+  // без суффикса JS парсит строку как локальное время браузера, что даёт
+  // огромный ложный elapsed сразу после старта в любой зоне восточнее UTC.
+  const startMs = new Date(/[Z+-]\d{2}:?\d{2}$|Z$/.test(startTime) ? startTime : startTime + 'Z').getTime();
+  const elapsedSec = Math.max(0, Math.floor((now - startMs) / 1000));
   const mm = Math.floor(elapsedSec / 60).toString().padStart(2, '0');
   const ss = (elapsedSec % 60).toString().padStart(2, '0');
 
@@ -234,13 +238,23 @@ interface FormState {
   mrc_source: 'hlc3' | 'close' | 'ohlc4';
 }
 
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function defaultDateRange(monthsBack = 3): { start_date: string; end_date: string } {
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - monthsBack);
+  return { start_date: isoDate(start), end_date: isoDate(end) };
+}
+
 const DEFAULT_FORM: FormState = {
   symbol: 'BTC/USDT',
   exchange: 'binance',
   order_type: 'long',
   timeframe: '15m',
-  start_date: '2024-06-01',
-  end_date: '2024-07-01',
+  ...defaultDateRange(3),
   start_balance: 10000,
   leverage: 10,
   commission_rate: 0.04,
