@@ -126,6 +126,7 @@ jobs:
               echo "PRICE_TRACKER_URL=http://price-tracker:8010"
               echo "NEXT_PUBLIC_SIGNALS_URL=https://signals.hub-cargo.ru"
               echo "FRONTEND_IMAGE=ghcr.io/${REPO_LOWERCASE}-frontend:latest"
+              echo "BACKTESTER_CORS_ORIGINS=https://${{ secrets.DOMAIN }}"
             } > .env
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
