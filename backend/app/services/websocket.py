@@ -207,7 +207,7 @@ async def _notify_price_tracker(action: str, exchange: str, symbol: str):
     """Call price-tracker HTTP API to subscribe/unsubscribe a symbol."""
     import aiohttp
     from app.core.config import settings
-    url = f"{settings.PRICE_TRACKER_URL}/{action}"
+    url = f"{settings.PRICE_TRACKER_URL}/subscribe"
     try:
         async with aiohttp.ClientSession() as session:
             if action == "subscribe":

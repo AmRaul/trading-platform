@@ -36,5 +36,10 @@ ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=web_app.py
 
 # Запускаем веб-сервер
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--capture-output", "web_app:app"]
+# --workers 1: running_backtests/backtest_results живут в памяти процесса
+# (не в Redis/БД), поэтому с >1 воркером poll после POST может случайно
+# попасть на другой процесс и дать ложный 404. Бэктест сам исполняется в
+# отдельном треде (threading.Thread), так что один воркер не блокирует
+# обработку остальных HTTP-запросов во время долгого прогона.
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--capture-output", "web_app:app"]
 

@@ -261,6 +261,145 @@ class TechnicalIndicators:
             
         return result
     
+    def _supersmoother(self, src: pd.Series, length: int) -> pd.Series:
+        """
+        SuperSmoother (Ehlers) — двухполюсный low-lag фильтр.
+        Рекурсивен по 2 предыдущим ВЫХОДНЫМ значениям, не векторизуется —
+        цикл по барам неизбежен (аналог calculate_supertrend выше).
+
+        Cold-start: out[0] = src[0], out[1] = src[1] (не NaN, оба бара
+        напрямую из источника, БЕЗ частичного применения рекурсии) —
+        стандартная практика для двухполюсных Ehlers-фильтров. Инициализация
+        out[1] через частичную формулу (c1*src[1] + c2*out[0], без c3) даёт
+        выброс на разгоне при постоянном входе (проверено эмпирически —
+        c2≈1.96 при length=200 даёт out[1]≈195 вместо 100, и система
+        затухает к истинному значению только через сотни баров вместо
+        мгновенной сходимости). Сходится за ~length баров.
+        """
+        a1 = np.exp(-np.sqrt(2) * np.pi / length)
+        b1 = 2 * a1 * np.cos(np.sqrt(2) * np.pi / length)
+        c3 = -a1 ** 2
+        c2 = b1
+        c1 = 1 - c2 - c3
+
+        src_vals = src.values
+        out = np.empty(len(src_vals), dtype=float)
+        for i in range(len(src_vals)):
+            if i == 0:
+                out[i] = src_vals[i]
+            elif i == 1:
+                out[i] = src_vals[i]
+            else:
+                out[i] = c1 * src_vals[i] + c2 * out[i - 1] + c3 * out[i - 2]
+
+        return pd.Series(out, index=src.index)
+
+    def calculate_mrc(self, df: pd.DataFrame, length: int = 200,
+                       inner_mult: float = 1.0, outer_mult: float = 2.415,
+                       gradsize: float = 0.5, source: str = 'hlc3',
+                       cache_key: str = None) -> pd.DataFrame:
+        """
+        Вычисляет Mean Reversion Channel (MRC), перенесено из PineScript
+        индикатора "AT-MRC Platon" (см. algoTrading/mrc_btc_15m_overbought_oversold.txt
+        для полной формулы и обоснования — источник истины для этой реализации).
+
+        Args:
+            df: DataFrame с колонками high, low, close (и open если source='ohlc4')
+            length: период SuperSmoother (по умолчанию 200)
+            inner_mult: множитель внутренней полосы (по умолчанию 1.0)
+            outer_mult: множитель внешней полосы (по умолчанию 2.415)
+            gradsize: шаг ступени zone-сетки в единицах meanrange (по умолчанию 0.5)
+            source: источник цены — 'hlc3' | 'close' | 'ohlc4'
+            cache_key: ключ для кэширования (опционально; в бэктесте всегда None —
+                см. остальные indicator-методы этого файла)
+
+        Returns:
+            pd.DataFrame (тот же индекс, что и df) с колонками:
+            meanline, meanrange, upband1, loband1, upband2, loband2, risk_zone
+        """
+        if cache_key and cache_key in self.cache:
+            return self.cache[cache_key]
+
+        high, low, close = df['high'], df['low'], df['close']
+
+        if source == 'close':
+            src = close
+        elif source == 'ohlc4':
+            src = (df['open'] + high + low + close) / 4
+        else:  # hlc3 (по умолчанию — соответствует настройке живого индикатора)
+            src = (high + low + close) / 3
+
+        # True Range — СВЕЖИЙ ручной расчёт, не через calculate_atr(): тот уже
+        # сглаживает TR внутри (RMA/Wilder), а SuperSmoother должен получать
+        # сырой TR и сглаживать его сам, иначе двойное сглаживание разойдётся
+        # с оригинальным PineScript-расчётом (там SuperSmoother(ta.tr, ...), не ta.atr).
+        prev_close = close.shift(1)
+        tr = pd.concat([
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        tr.iloc[0] = high.iloc[0] - low.iloc[0]  # нет prev_close для бара 0
+
+        meanline = self._supersmoother(src, length)
+        meanrange = self._supersmoother(tr, length)
+
+        mult = np.pi * inner_mult
+        mult2 = np.pi * outer_mult
+        upband1 = meanline + meanrange * mult
+        loband1 = meanline - meanrange * mult
+        upband2 = meanline + meanrange * mult2
+        loband2 = meanline - meanrange * mult2
+
+        # risk_zone (1..5, зеркально -1..-5) — классификация по шагам
+        # meanrange*gradsize вокруг outer band, см. mrc_btc_15m_overbought_oversold.txt §4
+        step = meanrange * gradsize
+        upband2_1 = upband2 + step * 4   # самая дальняя ступень (extreme)
+        loband2_1 = loband2 - step * 4
+
+        above_mean = close > meanline
+        below_mean = close < meanline
+
+        # Сторона above_mean (overbought: risk_zone положительный)
+        ob_conditions = [
+            close >= upband2_1,                                    # extreme overbought
+            close >= upband2,                                      # medium overbought (upband2 <= close < upband2_1)
+            close > upband2 - step * 8,                            # light overbought (за outer band, ещё не дошли до upband2)
+            close <= meanline + meanrange,                         # near mean
+        ]
+        ob_choices = [3, 2, 1, 4]
+        risk_zone_above = np.select(ob_conditions, ob_choices, default=5)  # above mean, вне зон 1-4
+
+        # Сторона below_mean (oversold: risk_zone отрицательный), зеркально
+        os_conditions = [
+            close <= loband2_1,
+            close <= loband2,
+            close < loband2 + step * 8,
+            close >= meanline - meanrange,
+        ]
+        os_choices = [-3, -2, -1, -4]
+        risk_zone_below = np.select(os_conditions, os_choices, default=-5)
+
+        risk_zone = pd.Series(
+            np.where(above_mean, risk_zone_above, np.where(below_mean, risk_zone_below, 0)),
+            index=df.index,
+        )
+
+        result = pd.DataFrame({
+            'meanline': meanline,
+            'meanrange': meanrange,
+            'upband1': upband1,
+            'loband1': loband1,
+            'upband2': upband2,
+            'loband2': loband2,
+            'risk_zone': risk_zone,
+        }, index=df.index)
+
+        if cache_key:
+            self.cache[cache_key] = result
+
+        return result
+
     def clear_cache(self):
         """Очищает кэш индикаторов"""
         self.cache.clear()
@@ -588,6 +727,72 @@ class IndicatorStrategy:
                 'direction_series': direction,
                 'stoch_k_series': stoch_k_percent,
                 'stoch_d_series': stoch_d_percent
+            }
+        }
+
+    def mrc_reversion_signal(self, data: pd.DataFrame, config: dict) -> dict:
+        """
+        Стратегия: MRC (Mean Reversion Channel) — вход при касании заданной
+        полосы канала (entry_band). Перенос BTC-бота на 15m, работающего
+        живой торговлей больше года (см. algoTrading/mrc_btc_15m_overbought_oversold.txt
+        для полной формулы). Live-бот использует entry_band=2 по умолчанию.
+
+        Args:
+            data: DataFrame с OHLCV данными
+            config: конфигурация — length, inner_mult, outer_mult, gradsize,
+                    entry_band (1/2/3), source ('hlc3'|'close'|'ohlc4')
+
+        Returns:
+            dict с сигналами и значениями индикатора
+        """
+        length = config.get('length', 200)
+        inner_mult = config.get('inner_mult', 1.0)
+        outer_mult = config.get('outer_mult', 2.415)
+        gradsize = config.get('gradsize', 0.5)
+        entry_band = config.get('entry_band', 2)
+        source = config.get('source', 'hlc3')
+
+        safe_return = {
+            'long_signal': False,
+            'short_signal': False,
+            'risk_zone': 0,
+            'indicators': {
+                'meanline': 0, 'meanrange': 0, 'upband2': 0, 'loband2': 0, 'risk_zone': 0,
+            }
+        }
+
+        # length-based guard: SuperSmoother математически никогда не даёт NaN
+        # после бара 0 (см. calculate_mrc/_supersmoother) — в отличие от
+        # остальных indicator-методов этого файла, здесь достаточно длины
+        # истории, а не pd.isna() проверки, чтобы решить "прогрелся ли канал".
+        if len(data) == 0 or len(data) < length:
+            return safe_return
+
+        mrc = self.indicators.calculate_mrc(
+            data, length=length, inner_mult=inner_mult, outer_mult=outer_mult,
+            gradsize=gradsize, source=source, cache_key=None
+        )
+
+        if len(mrc) == 0:
+            return safe_return
+
+        risk_zone_current = int(mrc['risk_zone'].iloc[-1])
+
+        long_signal = (risk_zone_current == -entry_band)
+        short_signal = (risk_zone_current == entry_band)
+
+        return {
+            'long_signal': long_signal,
+            'short_signal': short_signal,
+            'risk_zone': risk_zone_current,
+            'indicators': {
+                'meanline': mrc['meanline'].iloc[-1],
+                'meanrange': mrc['meanrange'].iloc[-1],
+                'upband2': mrc['upband2'].iloc[-1],
+                'loband2': mrc['loband2'].iloc[-1],
+                'risk_zone': risk_zone_current,
+                'meanline_series': mrc['meanline'],
+                'risk_zone_series': mrc['risk_zone'],
             }
         }
 
