@@ -63,6 +63,7 @@ services:
       - DATABASE_URL=postgresql://${DB_USER:-backtester}:${DB_PASSWORD:-changeme}@postgres:5432/backtester
       - REDIS_URL=redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       - ANALYTICS_API_URL=http://market-analytics:8001
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
     depends_on:
       postgres:
         condition: service_healthy
