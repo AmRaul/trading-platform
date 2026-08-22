@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { backtestApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Play, Clock, ChevronDown, ChevronUp, Code2 } from 'lucide-react';
+import { Play, Clock, ChevronDown, ChevronUp, Code2, Download } from 'lucide-react';
 
 interface BacktestStatus {
   task_id: string;
@@ -110,7 +110,36 @@ function ElapsedTimer({ startTime }: { startTime: string }) {
   );
 }
 
-function ResultsView({ results }: { results: BacktestResults }) {
+function tradesToCsv(trades: BacktestResults['trade_history']): string {
+  const headers = ['entry_time', 'exit_time', 'entry_price', 'exit_price', 'pnl', 'pnl_percent', 'reason'];
+  const rows = trades.map(t => [
+    t.entry_time,
+    t.exit_time,
+    t.entry_price ?? '',
+    t.exit_price ?? '',
+    t.pnl ?? '',
+    t.pnl_percent ?? '',
+    t.reason ?? '',
+  ]);
+  return [headers, ...rows]
+    .map(row => row.map(cell => {
+      const s = String(cell);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(','))
+    .join('\n');
+}
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function ResultsView({ results, taskId }: { results: BacktestResults; taskId: string }) {
   const { basic_stats: bs, advanced_metrics: am, trade_history } = results;
   const shownTrades = trade_history.slice(0, 200);
 
@@ -131,6 +160,16 @@ function ResultsView({ results }: { results: BacktestResults }) {
       </div>
 
       <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+          <span className="text-xs text-gray-400">Список сделок ({trade_history.length})</span>
+          <button
+            onClick={() => downloadCsv(`trades_${taskId.slice(0, 8)}.csv`, tradesToCsv(trade_history))}
+            disabled={trade_history.length === 0}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded"
+          >
+            <Download size={13} /> Скачать CSV
+          </button>
+        </div>
         <div className="overflow-x-auto max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-700 text-gray-300 uppercase text-xs sticky top-0">
@@ -200,7 +239,9 @@ interface FormState {
   start_balance: number;
   leverage: number;
   commission_rate: number;
+  entry_mode: 'percent' | 'fixed';
   entry_percent: number;
+  entry_fixed_usdt: number;
   dca_enabled: boolean;
   dca_max_orders: number;
   dca_step_percent: number;
@@ -258,7 +299,9 @@ const DEFAULT_FORM: FormState = {
   start_balance: 10000,
   leverage: 10,
   commission_rate: 0.04,
+  entry_mode: 'percent',
   entry_percent: 10,
+  entry_fixed_usdt: 100,
   dca_enabled: true,
   dca_max_orders: 3,
   dca_step_percent: 1.55,
@@ -301,7 +344,9 @@ function buildConfig(f: FormState): object {
     commission_rate: f.commission_rate / 100,
     start_date: f.start_date,
     end_date: f.end_date,
-    first_order: { type: 'percent', amount_percent: f.entry_percent },
+    first_order: f.entry_mode === 'fixed'
+      ? { type: 'fixed', amount_fixed: f.entry_fixed_usdt }
+      : { type: 'percent', amount_percent: f.entry_percent },
     dca: {
       enabled: f.dca_enabled,
       max_orders: f.dca_max_orders,
@@ -469,9 +514,9 @@ function IndicatorFields({ form, setForm }: { form: FormState; setForm: (updater
           onChange={(e) => set('mrc_entry_band')(parseInt(e.target.value))}
           className={inputCls}
         >
-          <option value={1}>1 (внутренняя полоса)</option>
-          <option value={2}>2 (внешняя полоса, по умолчанию live-бота)</option>
-          <option value={3}>3</option>
+          <option value={1}>1 — лёгкий выход за внешнюю полосу (ранний, самый частый сигнал)</option>
+          <option value={2}>2 — цена дошла до внешней полосы (дефолт live-бота)</option>
+          <option value={3}>3 — экстремальное отклонение (самый глубокий, самый редкий сигнал)</option>
         </select>
       </Field>
       <Field label="Source">
@@ -656,7 +701,21 @@ export default function BacktesterPage() {
 
               <Section title="Вход и DCA-сетка">
                 <div className="grid grid-cols-4 gap-3">
-                  <NumberField label="Первый ордер (% депозита)" value={form.entry_percent} onChange={v => setForm(f => ({ ...f, entry_percent: v }))} />
+                  <Field label="Первый ордер, тип">
+                    <select
+                      value={form.entry_mode}
+                      onChange={e => setForm(f => ({ ...f, entry_mode: e.target.value as FormState['entry_mode'] }))}
+                      className={inputCls}
+                    >
+                      <option value="percent">% от депозита</option>
+                      <option value="fixed">Фиксированная сумма (USDT)</option>
+                    </select>
+                  </Field>
+                  {form.entry_mode === 'fixed' ? (
+                    <NumberField label="Первый ордер (USDT)" value={form.entry_fixed_usdt} onChange={v => setForm(f => ({ ...f, entry_fixed_usdt: v }))} />
+                  ) : (
+                    <NumberField label="Первый ордер (% депозита)" value={form.entry_percent} onChange={v => setForm(f => ({ ...f, entry_percent: v }))} />
+                  )}
                   <Field label="DCA доборы">
                     <select value={form.dca_enabled ? '1' : '0'} onChange={e => setForm(f => ({ ...f, dca_enabled: e.target.value === '1' }))} className={inputCls}>
                       <option value="1">Включены</option>
@@ -781,7 +840,7 @@ export default function BacktesterPage() {
         )}
 
         {/* Results */}
-        {results && <ResultsView results={results} />}
+        {results && activeTaskId && <ResultsView results={results} taskId={activeTaskId} />}
 
         {/* History */}
         <div>
