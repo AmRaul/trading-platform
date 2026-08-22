@@ -1,0 +1,64 @@
+{
+  "start_balance": 10000,
+  "leverage": 10,
+  "order_type": "long",
+  "timeframe": "15m",
+  "commission_rate": 0.0004,
+  "start_date": "2024-01-01",
+  "end_date": "2024-12-31",
+
+  "first_order": {
+    "type": "percent",
+    "amount_percent": 10
+  },
+
+  "dca": {
+    "enabled": true,
+    "max_orders": 3,
+    "step_price": {
+      "type": "fixed_percent",
+      "value": 1.55
+    },
+    "martingale": {
+      "enabled": true,
+      "multiplier": 2.0
+    }
+  },
+
+  "take_profit": {
+    "enabled": true,
+    "percent": 0.97,
+    "trailing": { "enabled": false }
+  },
+
+  "stop_loss": {
+    "enabled": false
+  },
+
+  "risk_management": {
+    "max_drawdown_percent": 20,
+    "max_open_positions": 1
+  },
+
+  "indicators": {
+    "enabled": true,
+    "strategy_type": "mrc_reversion",
+    "mrc_reversion": {
+      "length": 200,
+      "inner_mult": 1.0,
+      "outer_mult": 2.415,
+      "gradsize": 0.5,
+      "entry_band": 2,
+      "source": "hlc3"
+    }
+  },
+
+  "data_source": {
+    "type": "api",
+    "api": {
+      "exchange": "binance",
+      "symbol": "BTC/USDT",
+      "market_type": "futures"
+    }
+  }
+}

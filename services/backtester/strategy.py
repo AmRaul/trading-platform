@@ -262,6 +262,16 @@ class TradingStrategy:
                 else:
                     return signal_data['short_signal']
 
+            elif self.indicator_strategy == 'mrc_reversion':
+                signal_data = self.indicator_strategy_handler.mrc_reversion_signal(
+                    historical_data, self.indicator_config
+                )
+
+                if self.order_type == OrderType.LONG:
+                    return signal_data['long_signal']
+                else:
+                    return signal_data['short_signal']
+
             return False
 
         except Exception as e:

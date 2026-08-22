@@ -4,6 +4,7 @@
 """
 
 from flask import Flask, render_template, request, jsonify, send_file, flash, redirect, url_for
+from flask_cors import CORS
 import json
 import os
 import threading
@@ -48,6 +49,16 @@ from live_signal_generator import LiveSignalGenerator
 
 app = Flask(__name__)
 app.secret_key = 'backtester_secret_key_change_in_production'
+
+# CORS: разрешаем дашборд-фронтенду обращаться к /api/* напрямую из браузера.
+# Ограничено /api/*, не HTML-шаблонами — те не предназначены для cross-origin fetch.
+CORS(
+    app,
+    resources={r"/api/*": {"origins": os.environ.get(
+        "CORS_ALLOWED_ORIGINS", "http://localhost:3000"
+    ).split(",")}},
+    supports_credentials=False,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -424,11 +435,23 @@ def get_backtest_results(task_id):
         return jsonify({'error': 'Результаты не найдены'}), 404
     
     results = backtest_results[task_id]
-    
+
     # Подготавливаем результаты для JSON
     json_results = prepare_results_for_json(results)
-    
+
     return jsonify(json_results)
+
+@app.route('/api/backtest-history')
+def get_backtest_history():
+    """API: список последних прогонов бэктестов из Postgres (переживает рестарт процесса)"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        limit = max(1, min(limit, 200))
+        history = get_recent_backtests(limit=limit)
+        return jsonify(history)
+    except Exception as e:
+        logger.error(f"Failed to fetch backtest history: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/download-data', methods=['POST'])
 def download_data():

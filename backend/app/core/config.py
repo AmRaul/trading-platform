@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = ""
 
     # Price Tracker service URL
-    PRICE_TRACKER_URL: str = "http://price-tracker:8010/subscribe"
+    PRICE_TRACKER_URL: str = "http://price-tracker:8010"
 
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000"]

@@ -84,6 +84,12 @@ export default function Navbar() {
               >
                 Accounts
               </Link>
+              <Link
+                href="/backtester"
+                className="px-3 py-2 rounded hover:bg-gray-700"
+              >
+                Backtester
+              </Link>
             </div>
           </div>
 

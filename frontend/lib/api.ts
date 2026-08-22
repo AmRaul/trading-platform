@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const SIGNALS_URL = process.env.NEXT_PUBLIC_SIGNALS_URL || 'http://localhost:8020';
+const BACKTESTER_URL = process.env.NEXT_PUBLIC_BACKTESTER_URL || 'http://localhost:8010';
 
 export const api = axios.create({
   baseURL: API_URL,
@@ -10,6 +11,11 @@ export const api = axios.create({
 
 export const signalsApi2 = axios.create({
   baseURL: SIGNALS_URL,
+  headers: { 'Content-Type': 'application/json' },
+});
+
+export const backtesterApi2 = axios.create({
+  baseURL: BACKTESTER_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
@@ -124,6 +130,14 @@ export const trendSymbolsApi = {
   getAll: () => signalsApi2.get('/api/trend-symbols/'),
   add: (symbol: string) => signalsApi2.post('/api/trend-symbols/', { symbol }),
   remove: (id: number) => signalsApi2.delete(`/api/trend-symbols/${id}`),
+};
+
+// Backtester API — backtester-web service
+export const backtestApi = {
+  run: (config: object) => backtesterApi2.post('/api/run-backtest', config),
+  getStatus: (taskId: string) => backtesterApi2.get(`/api/backtest-status/${taskId}`),
+  getResults: (taskId: string) => backtesterApi2.get(`/api/backtest-results/${taskId}`),
+  getHistory: (limit = 50) => backtesterApi2.get('/api/backtest-history', { params: { limit } }),
 };
 
 // Accounts API
