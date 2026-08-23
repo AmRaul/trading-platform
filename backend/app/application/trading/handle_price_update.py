@@ -32,7 +32,15 @@ class HandlePriceUpdateUseCase:
         sl_moved = False
         min_move = old_sl * 0.0001
 
-        if bot.side == "LONG":
+        # old_sl == 0 means SL was never set (or was left disabled) — accept
+        # the freshly computed value outright instead of comparing direction,
+        # otherwise a zero SL can never be recovered (0 - 0 blocks any move
+        # for SHORT, 0 + 0 blocks any move for LONG).
+        if old_sl == 0:
+            if sl_price != 0:
+                position.current_sl = sl_price
+                sl_moved = True
+        elif bot.side == "LONG":
             if sl_price > position.current_sl + min_move:
                 position.current_sl = sl_price
                 sl_moved = True
