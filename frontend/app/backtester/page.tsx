@@ -51,6 +51,8 @@ interface BacktestResults {
     pnl: NullableNumber;
     pnl_percent: NullableNumber;
     reason?: string;
+    total_orders?: number;
+    dca_orders_count?: number;
   }>;
 }
 
@@ -111,12 +113,14 @@ function ElapsedTimer({ startTime }: { startTime: string }) {
 }
 
 function tradesToCsv(trades: BacktestResults['trade_history']): string {
-  const headers = ['entry_time', 'exit_time', 'entry_price', 'exit_price', 'pnl', 'pnl_percent', 'reason'];
+  const headers = ['entry_time', 'exit_time', 'entry_price', 'exit_price', 'total_orders', 'dca_orders_count', 'pnl', 'pnl_percent', 'reason'];
   const rows = trades.map(t => [
     t.entry_time,
     t.exit_time,
     t.entry_price ?? '',
     t.exit_price ?? '',
+    t.total_orders ?? '',
+    t.dca_orders_count ?? '',
     t.pnl ?? '',
     t.pnl_percent ?? '',
     t.reason ?? '',
@@ -178,27 +182,42 @@ function ResultsView({ results, taskId }: { results: BacktestResults; taskId: st
                 <th className="text-left py-2 px-3">Exit Time</th>
                 <th className="text-right py-2 px-3">Entry</th>
                 <th className="text-right py-2 px-3">Exit</th>
+                <th className="text-right py-2 px-3">Orders</th>
                 <th className="text-right py-2 px-3">PnL</th>
                 <th className="text-right py-2 px-3">PnL %</th>
                 <th className="text-left py-2 px-3">Reason</th>
               </tr>
             </thead>
             <tbody>
-              {shownTrades.map((t, i) => (
-                <tr key={i} className="border-t border-gray-700">
-                  <td className="py-2 px-3 text-gray-400 text-xs">{t.entry_time}</td>
-                  <td className="py-2 px-3 text-gray-400 text-xs">{t.exit_time}</td>
-                  <td className="py-2 px-3 text-right text-gray-300">{fmt(t.entry_price)}</td>
-                  <td className="py-2 px-3 text-right text-gray-300">{fmt(t.exit_price)}</td>
-                  <td className={`py-2 px-3 text-right font-semibold ${(t.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {fmtSigned(t.pnl)}
-                  </td>
-                  <td className={`py-2 px-3 text-right ${(t.pnl_percent ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {fmtSigned(t.pnl_percent, 2, '%')}
-                  </td>
-                  <td className="py-2 px-3 text-gray-400 text-xs">{t.reason ?? '—'}</td>
-                </tr>
-              ))}
+              {shownTrades.map((t, i) => {
+                const isOpenAtEnd = t.reason === 'end_of_data';
+                const pnlColor = isOpenAtEnd ? 'text-gray-400' : (t.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400';
+                return (
+                  <tr key={i} className={`border-t border-gray-700 ${isOpenAtEnd ? 'opacity-60' : ''}`}>
+                    <td className="py-2 px-3 text-gray-400 text-xs">{t.entry_time}</td>
+                    <td className="py-2 px-3 text-gray-400 text-xs">{t.exit_time}</td>
+                    <td className="py-2 px-3 text-right text-gray-300">{fmt(t.entry_price)}</td>
+                    <td className="py-2 px-3 text-right text-gray-300">{fmt(t.exit_price)}</td>
+                    <td className="py-2 px-3 text-right text-gray-300">
+                      {t.total_orders ?? '—'}
+                      {!!t.dca_orders_count && <span className="text-gray-500"> ({t.dca_orders_count} DCA)</span>}
+                    </td>
+                    <td className={`py-2 px-3 text-right font-semibold ${pnlColor}`}>
+                      {fmtSigned(t.pnl)}
+                    </td>
+                    <td className={`py-2 px-3 text-right ${pnlColor}`}>
+                      {fmtSigned(t.pnl_percent, 2, '%')}
+                    </td>
+                    <td className="py-2 px-3 text-xs">
+                      {isOpenAtEnd ? (
+                        <span className="text-yellow-400" title="Позиция была ещё открыта на момент окончания исторических данных — это не реальный убыточный выход, а незавершённая сделка, вынужденно закрытая по последней цене для подсчёта незавершённой позиции. Исключена из общей статистики (win rate, total return и т.д.)">
+                          Открыта на конец периода
+                        </span>
+                      ) : (t.reason ?? '—')}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -219,7 +238,7 @@ function ResultsView({ results, taskId }: { results: BacktestResults; taskId: st
 // см. services/backtester/strategy.py / indicators.py).
 // ---------------------------------------------------------------------------
 
-type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion';
+type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion' | 'custom';
 
 const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   none: 'Без индикатора (только DCA-сетка)',
@@ -227,7 +246,10 @@ const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   volatility_bounce: 'Volatility Bounce (Bollinger + ATR)',
   momentum_trend: 'Momentum + Trend (SuperTrend + Stoch RSI)',
   mrc_reversion: 'MRC Reversion (Mean Reversion Channel)',
+  custom: 'Свой набор — выбрать индикаторы вручную',
 };
+
+type CustomIndicatorKey = 'ema' | 'rsi' | 'bollinger_bands' | 'atr' | 'supertrend' | 'stochastic_rsi' | 'adx';
 
 interface FormState {
   symbol: string;
@@ -277,6 +299,30 @@ interface FormState {
   mrc_gradsize: number;
   mrc_entry_band: number;
   mrc_source: 'hlc3' | 'close' | 'ohlc4';
+  // custom — свой набор индикаторов
+  custom_selected: Record<CustomIndicatorKey, boolean>;
+  custom_ema_mode: 'cross' | 'price_vs_ema';
+  custom_ema_short: number;
+  custom_ema_long: number;
+  custom_ema_price_period: number;
+  custom_rsi_period: number;
+  custom_rsi_mode: 'level' | 'crossover';
+  custom_rsi_oversold: number;
+  custom_rsi_overbought: number;
+  custom_rsi_cross_long: number;
+  custom_rsi_cross_short: number;
+  custom_bb_period: number;
+  custom_bb_std: number;
+  custom_atr_period: number;
+  custom_supertrend_period: number;
+  custom_supertrend_multiplier: number;
+  custom_stoch_k: number;
+  custom_stoch_d: number;
+  custom_stoch_rsi_period: number;
+  custom_stoch_oversold: number;
+  custom_stoch_overbought: number;
+  custom_adx_period: number;
+  custom_adx_max: number;
 }
 
 function isoDate(d: Date): string {
@@ -333,6 +379,29 @@ const DEFAULT_FORM: FormState = {
   mrc_gradsize: 0.5,
   mrc_entry_band: 2,
   mrc_source: 'hlc3',
+  custom_selected: { ema: true, rsi: true, bollinger_bands: false, atr: false, supertrend: false, stochastic_rsi: false, adx: false },
+  custom_ema_mode: 'cross',
+  custom_ema_short: 50,
+  custom_ema_long: 200,
+  custom_ema_price_period: 200,
+  custom_rsi_period: 14,
+  custom_rsi_mode: 'level',
+  custom_rsi_oversold: 30,
+  custom_rsi_overbought: 70,
+  custom_rsi_cross_long: 38,
+  custom_rsi_cross_short: 62,
+  custom_bb_period: 20,
+  custom_bb_std: 2,
+  custom_atr_period: 14,
+  custom_supertrend_period: 10,
+  custom_supertrend_multiplier: 3,
+  custom_stoch_k: 14,
+  custom_stoch_d: 3,
+  custom_stoch_rsi_period: 14,
+  custom_stoch_oversold: 20,
+  custom_stoch_overbought: 80,
+  custom_adx_period: 14,
+  custom_adx_max: 25,
 };
 
 function buildConfig(f: FormState): object {
@@ -412,6 +481,39 @@ function buildConfig(f: FormState): object {
         source: f.mrc_source,
       },
     };
+  } else if (f.indicator === 'custom') {
+    const indicators: any = { enabled: true, selected_indicators: f.custom_selected };
+
+    if (f.custom_selected.ema) {
+      indicators.ema = f.custom_ema_mode === 'price_vs_ema'
+        ? { use_price_comparison: true, period: f.custom_ema_price_period }
+        : { use_price_comparison: false, short_period: f.custom_ema_short, long_period: f.custom_ema_long };
+    }
+    if (f.custom_selected.rsi) {
+      indicators.rsi = f.custom_rsi_mode === 'crossover'
+        ? { period: f.custom_rsi_period, use_crossover: true, crossover_level_long: f.custom_rsi_cross_long, crossover_level_short: f.custom_rsi_cross_short }
+        : { period: f.custom_rsi_period, use_crossover: false, oversold: f.custom_rsi_oversold, overbought: f.custom_rsi_overbought };
+    }
+    if (f.custom_selected.bollinger_bands) {
+      indicators.bollinger_bands = { period: f.custom_bb_period, std_dev: f.custom_bb_std };
+    }
+    if (f.custom_selected.atr) {
+      indicators.atr = { period: f.custom_atr_period };
+    }
+    if (f.custom_selected.supertrend) {
+      indicators.supertrend = { period: f.custom_supertrend_period, multiplier: f.custom_supertrend_multiplier };
+    }
+    if (f.custom_selected.stochastic_rsi) {
+      indicators.stochastic_rsi = {
+        k_period: f.custom_stoch_k, d_period: f.custom_stoch_d, rsi_period: f.custom_stoch_rsi_period,
+        oversold_level: f.custom_stoch_oversold, overbought_level: f.custom_stoch_overbought,
+      };
+    }
+    if (f.custom_selected.adx) {
+      indicators.adx = { period: f.custom_adx_period, max_value: f.custom_adx_max };
+    }
+
+    config.indicators = indicators;
   }
 
   return config;
@@ -501,35 +603,143 @@ function IndicatorFields({ form, setForm }: { form: FormState; setForm: (updater
     );
   }
 
-  // mrc_reversion
+  if (form.indicator === 'mrc_reversion') {
+    return (
+      <div className="grid grid-cols-3 gap-3">
+        <NumberField label="Length" value={form.mrc_length} onChange={set('mrc_length')} />
+        <NumberField label="Inner mult" value={form.mrc_inner_mult} onChange={set('mrc_inner_mult')} step={0.01} />
+        <NumberField label="Outer mult" value={form.mrc_outer_mult} onChange={set('mrc_outer_mult')} step={0.001} />
+        <NumberField label="Gradsize" value={form.mrc_gradsize} onChange={set('mrc_gradsize')} step={0.01} />
+        <Field label="Entry band">
+          <select
+            value={form.mrc_entry_band}
+            onChange={(e) => set('mrc_entry_band')(parseInt(e.target.value))}
+            className={inputCls}
+          >
+            <option value={1}>1 — лёгкий выход за внешнюю полосу (ранний, самый частый сигнал)</option>
+            <option value={2}>2 — цена дошла до внешней полосы (дефолт live-бота)</option>
+            <option value={3}>3 — экстремальное отклонение (самый глубокий, самый редкий сигнал)</option>
+          </select>
+        </Field>
+        <Field label="Source">
+          <select
+            value={form.mrc_source}
+            onChange={(e) => set('mrc_source')(e.target.value as FormState['mrc_source'])}
+            className={inputCls}
+          >
+            <option value="hlc3">hlc3</option>
+            <option value="close">close</option>
+            <option value="ohlc4">ohlc4</option>
+          </select>
+        </Field>
+      </div>
+    );
+  }
+
+  // custom — свой набор индикаторов, комбинируются через AND (все выбранные
+  // должны согласованно дать сигнал long/short одновременно)
+  const toggleIndicator = (key: CustomIndicatorKey) => (checked: boolean) =>
+    setForm(f => ({ ...f, custom_selected: { ...f.custom_selected, [key]: checked } }));
+
+  const noneSelected = !Object.values(form.custom_selected).some(Boolean);
+
   return (
-    <div className="grid grid-cols-3 gap-3">
-      <NumberField label="Length" value={form.mrc_length} onChange={set('mrc_length')} />
-      <NumberField label="Inner mult" value={form.mrc_inner_mult} onChange={set('mrc_inner_mult')} step={0.01} />
-      <NumberField label="Outer mult" value={form.mrc_outer_mult} onChange={set('mrc_outer_mult')} step={0.001} />
-      <NumberField label="Gradsize" value={form.mrc_gradsize} onChange={set('mrc_gradsize')} step={0.01} />
-      <Field label="Entry band">
-        <select
-          value={form.mrc_entry_band}
-          onChange={(e) => set('mrc_entry_band')(parseInt(e.target.value))}
-          className={inputCls}
-        >
-          <option value={1}>1 — лёгкий выход за внешнюю полосу (ранний, самый частый сигнал)</option>
-          <option value={2}>2 — цена дошла до внешней полосы (дефолт live-бота)</option>
-          <option value={3}>3 — экстремальное отклонение (самый глубокий, самый редкий сигнал)</option>
-        </select>
-      </Field>
-      <Field label="Source">
-        <select
-          value={form.mrc_source}
-          onChange={(e) => set('mrc_source')(e.target.value as FormState['mrc_source'])}
-          className={inputCls}
-        >
-          <option value="hlc3">hlc3</option>
-          <option value="close">close</option>
-          <option value="ohlc4">ohlc4</option>
-        </select>
-      </Field>
+    <div className="space-y-3">
+      <p className="text-xs text-gray-500">Все включённые индикаторы должны одновременно согласиться на long/short (условие AND).</p>
+      {noneSelected && (
+        <p className="text-xs text-yellow-400">Выберите хотя бы один индикатор — иначе сигналов не будет вообще.</p>
+      )}
+
+      <IndicatorCheckbox label="EMA — трендовый фильтр" checked={form.custom_selected.ema} onChange={toggleIndicator('ema')}>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Режим">
+            <select value={form.custom_ema_mode} onChange={e => setForm(f => ({ ...f, custom_ema_mode: e.target.value as FormState['custom_ema_mode'] }))} className={inputCls}>
+              <option value="cross">EMA short vs EMA long</option>
+              <option value="price_vs_ema">Цена vs одна EMA</option>
+            </select>
+          </Field>
+          {form.custom_ema_mode === 'cross' ? (
+            <>
+              <NumberField label="EMA short" value={form.custom_ema_short} onChange={set('custom_ema_short')} />
+              <NumberField label="EMA long" value={form.custom_ema_long} onChange={set('custom_ema_long')} />
+            </>
+          ) : (
+            <NumberField label="EMA период" value={form.custom_ema_price_period} onChange={set('custom_ema_price_period')} />
+          )}
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="RSI — моментум" checked={form.custom_selected.rsi} onChange={toggleIndicator('rsi')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Период" value={form.custom_rsi_period} onChange={set('custom_rsi_period')} />
+          <Field label="Режим">
+            <select value={form.custom_rsi_mode} onChange={e => setForm(f => ({ ...f, custom_rsi_mode: e.target.value as FormState['custom_rsi_mode'] }))} className={inputCls}>
+              <option value="level">Уровень oversold/overbought</option>
+              <option value="crossover">Пересечение уровня</option>
+            </select>
+          </Field>
+          {form.custom_rsi_mode === 'level' ? (
+            <>
+              <NumberField label="Oversold" value={form.custom_rsi_oversold} onChange={set('custom_rsi_oversold')} />
+              <NumberField label="Overbought" value={form.custom_rsi_overbought} onChange={set('custom_rsi_overbought')} />
+            </>
+          ) : (
+            <>
+              <NumberField label="Уровень для long" value={form.custom_rsi_cross_long} onChange={set('custom_rsi_cross_long')} />
+              <NumberField label="Уровень для short" value={form.custom_rsi_cross_short} onChange={set('custom_rsi_cross_short')} />
+            </>
+          )}
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="Bollinger Bands — волатильность" checked={form.custom_selected.bollinger_bands} onChange={toggleIndicator('bollinger_bands')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Период" value={form.custom_bb_period} onChange={set('custom_bb_period')} />
+          <NumberField label="Std dev" value={form.custom_bb_std} onChange={set('custom_bb_std')} step={0.1} />
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="ATR — фильтр низкой волатильности" checked={form.custom_selected.atr} onChange={toggleIndicator('atr')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Период" value={form.custom_atr_period} onChange={set('custom_atr_period')} />
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="SuperTrend — направление тренда" checked={form.custom_selected.supertrend} onChange={toggleIndicator('supertrend')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Период" value={form.custom_supertrend_period} onChange={set('custom_supertrend_period')} />
+          <NumberField label="Множитель" value={form.custom_supertrend_multiplier} onChange={set('custom_supertrend_multiplier')} step={0.1} />
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="Stochastic RSI — моментум" checked={form.custom_selected.stochastic_rsi} onChange={toggleIndicator('stochastic_rsi')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="K период" value={form.custom_stoch_k} onChange={set('custom_stoch_k')} />
+          <NumberField label="D период" value={form.custom_stoch_d} onChange={set('custom_stoch_d')} />
+          <NumberField label="RSI период" value={form.custom_stoch_rsi_period} onChange={set('custom_stoch_rsi_period')} />
+          <NumberField label="Oversold" value={form.custom_stoch_oversold} onChange={set('custom_stoch_oversold')} />
+          <NumberField label="Overbought" value={form.custom_stoch_overbought} onChange={set('custom_stoch_overbought')} />
+        </div>
+      </IndicatorCheckbox>
+
+      <IndicatorCheckbox label="ADX — фильтр силы тренда" checked={form.custom_selected.adx} onChange={toggleIndicator('adx')}>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="Период" value={form.custom_adx_period} onChange={set('custom_adx_period')} />
+          <NumberField label="Макс. значение (флэт)" value={form.custom_adx_max} onChange={set('custom_adx_max')} />
+        </div>
+      </IndicatorCheckbox>
+    </div>
+  );
+}
+
+function IndicatorCheckbox({ label, checked, onChange, children }: { label: string; checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode }) {
+  return (
+    <div className="border border-gray-700 rounded-lg p-3">
+      <label className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+        <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="accent-blue-500" />
+        {label}
+      </label>
+      {checked && <div className="mt-2">{children}</div>}
     </div>
   );
 }

@@ -581,13 +581,16 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 <span className="flex items-center gap-1.5">
                   <input type="checkbox" checked={formData.sl_enabled}
                     onChange={(e) => setFormData({ ...formData, sl_enabled: e.target.checked })} />
-                  Стоп-лосс (%)
+                  Стоп-лосс на вход (%)
                 </span>
               </label>
               <input type="number" value={formData.sl_initial}
                 onChange={(e) => setFormData({ ...formData, sl_initial: parseFloat(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded disabled:opacity-40"
                 step="0.1" disabled={!formData.sl_enabled} />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Защищает только 1–2 ордер. SL после 3 ордера и трейлинг ниже работают независимо и не выключаются этим чекбоксом.
+              </p>
             </div>
 
             <div>
@@ -866,13 +869,16 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                 <span className="flex items-center gap-1.5">
                   <input type="checkbox" checked={formData.sl_enabled}
                     onChange={(e) => setFormData({ ...formData, sl_enabled: e.target.checked })} />
-                  Стоп-лосс (%)
+                  Стоп-лосс на вход (%)
                 </span>
               </label>
               <input type="number" value={formData.sl_initial}
                 onChange={(e) => setFormData({ ...formData, sl_initial: parseFloat(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded disabled:opacity-40"
                 step="0.1" disabled={!formData.sl_enabled} />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Защищает только 1–2 ордер. SL после 3 ордера и трейлинг ниже работают независимо и не выключаются этим чекбоксом.
+              </p>
             </div>
 
             <div>
