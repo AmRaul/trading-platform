@@ -16,7 +16,7 @@ export default function DashboardPage() {
     queryFn: async () => (await positionsApi.getAll(true)).data,
   });
 
-  const activeBots = bots?.filter((b: any) => b.is_active) || [];
+  const activeBots = bots?.filter((b: any) => b.state !== 'IDLE') || [];
   const openPositions = positions || [];
   const totalPnl = bots?.reduce((sum: number, bot: any) => sum + bot.total_pnl, 0) || 0;
 
