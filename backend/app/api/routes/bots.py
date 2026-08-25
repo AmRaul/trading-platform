@@ -38,23 +38,31 @@ async def get_bots(
         for pos in pos_result.scalars().all():
             positions_by_bot[pos.bot_id] = pos
 
-    # Get last_order_price per bot — all Redis calls in parallel
+    # Get live state per bot from Redis — all calls in parallel.
+    # handle_price_update.py only commits unrealized_pnl/current_sl to
+    # Postgres on the next entry/pyramiding/close, so reading straight from
+    # the DB shows stale ($0.00) values between those events; Redis already
+    # gets a fresh write on every price tick.
     import asyncio as _asyncio
 
-    async def _get_last_price(bot_id: int, pos: any):
+    async def _get_live_state(bot_id: int, pos: any):
         redis_state = await get_position_state(str(bot_id))
+        last_order_price = None
         if redis_state and redis_state.get("last_order_price"):
-            return bot_id, redis_state["last_order_price"]
-        order_result = await db.execute(
-            select(Order.price)
-            .where(and_(Order.position_id == pos.id, Order.status == "FILLED"))
-            .order_by(Order.order_number.desc())
-            .limit(1)
-        )
-        return bot_id, order_result.scalar_one_or_none()
+            last_order_price = redis_state["last_order_price"]
+        else:
+            order_result = await db.execute(
+                select(Order.price)
+                .where(and_(Order.position_id == pos.id, Order.status == "FILLED"))
+                .order_by(Order.order_number.desc())
+                .limit(1)
+            )
+            last_order_price = order_result.scalar_one_or_none()
+        return bot_id, last_order_price, redis_state
 
-    results = await _asyncio.gather(*[_get_last_price(bid, pos) for bid, pos in positions_by_bot.items()])
-    last_order_prices = dict(results)
+    results = await _asyncio.gather(*[_get_live_state(bid, pos) for bid, pos in positions_by_bot.items()])
+    last_order_prices = {bid: price for bid, price, _ in results}
+    live_states = {bid: state for bid, _, state in results if state}
 
     # Assemble response with open_position
     response = []
@@ -62,12 +70,13 @@ async def get_bots(
         pos = positions_by_bot.get(bot.id)
         open_position = None
         if pos:
+            live = live_states.get(bot.id, {})
             open_position = OpenPositionData(
                 average_price=pos.average_price,
-                current_sl=pos.current_sl,
+                current_sl=live.get("current_sl", pos.current_sl),
                 total_size=pos.total_size,
                 order_count=pos.order_count,
-                unrealized_pnl=pos.unrealized_pnl or 0.0,
+                unrealized_pnl=live.get("unrealized_pnl", pos.unrealized_pnl or 0.0),
                 last_order_price=last_order_prices.get(bot.id),
                 opened_at=pos.opened_at,
             )
