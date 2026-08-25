@@ -144,12 +144,16 @@ class PositionCalculator:
         current_price: float,
         total_size: float,
     ) -> float:
+        # total_size is the position's notional value in USDT (not coin
+        # quantity), so PnL scales with % price move applied to that
+        # notional — not raw price delta * size, which overstates PnL by
+        # roughly a factor of average_price.
         if average_price == 0 or total_size == 0:
             return 0.0
         if side == "LONG":
-            return (current_price - average_price) * total_size
+            return total_size * (current_price - average_price) / average_price
         else:
-            return (average_price - current_price) * total_size
+            return total_size * (average_price - current_price) / average_price
 
     def calculate_pnl_percent(self, side: str, average_price: float, current_price: float) -> float:
         if average_price == 0:
