@@ -78,7 +78,7 @@ export const positionsApi = {
 
 // Trades API
 export const tradesApi = {
-  getAll: () => api.get('/api/trades'),
+  getAll: () => api.get('/api/trades/'),
 
   getByBot: (bot_id: number) => api.get(`/api/trades/bot/${bot_id}`),
 };
