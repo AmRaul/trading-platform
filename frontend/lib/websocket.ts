@@ -7,6 +7,13 @@ class WebSocketClient {
   private handlers: Map<string, Set<MessageHandler>> = new Map();
   private reconnectHandlers: Set<() => void> = new Set();
   private isFirstConnect: boolean = true;
+  // Subscriptions must survive both the initial connect (which can still be
+  // in CONNECTING state when a page calls subscribeToPrice on mount — send()
+  // would silently drop the message) and any later reconnect, since the
+  // server-side manager has no memory of what a fresh socket was subscribed
+  // to before it dropped.
+  private subscribedSymbols: Set<string> = new Set();
+  private subscribedBotIds: Set<number> = new Set();
 
   constructor() {
     this.url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
@@ -18,7 +25,7 @@ class WebSocketClient {
   }
 
   connect() {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
@@ -26,6 +33,7 @@ class WebSocketClient {
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
+      this.resubscribeAll();
       if (!this.isFirstConnect) {
         this.reconnectHandlers.forEach((h) => h());
       }
@@ -60,6 +68,17 @@ class WebSocketClient {
     };
   }
 
+  private resubscribeAll() {
+    this.subscribedSymbols.forEach((symbol) => this.rawSend({ type: 'subscribe_price', symbol }));
+    this.subscribedBotIds.forEach((bot_id) => this.rawSend({ type: 'subscribe_bot', bot_id }));
+  }
+
+  private rawSend(data: any) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+
   disconnect() {
     if (this.ws) {
       this.ws.close();
@@ -68,9 +87,7 @@ class WebSocketClient {
   }
 
   send(data: any) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
-    }
+    this.rawSend(data);
   }
 
   subscribe(type: string, handler: MessageHandler) {
@@ -85,11 +102,13 @@ class WebSocketClient {
   }
 
   subscribeToPrice(symbol: string) {
-    this.send({ type: 'subscribe_price', symbol });
+    this.subscribedSymbols.add(symbol);
+    this.rawSend({ type: 'subscribe_price', symbol });
   }
 
   subscribeToBot(bot_id: number) {
-    this.send({ type: 'subscribe_bot', bot_id });
+    this.subscribedBotIds.add(bot_id);
+    this.rawSend({ type: 'subscribe_bot', bot_id });
   }
 }
 
