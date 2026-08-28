@@ -219,7 +219,8 @@ class StrategyEngine:
                 if self._is_closing:
                     return
                 _, sl_type = self.calculator.calculate_stop_loss(
-                    self.bot.side, self.calculator.orders, current_price
+                    self.bot.side, self.calculator.orders, current_price,
+                    trailing_enabled=self.position.trailing_enabled,
                 )
                 exit_reason = "TRAILING_STOP" if sl_type == "trailing" else "SL_HIT"
                 logger.info(

@@ -30,6 +30,7 @@ class Position(Base):
     # Status
     is_open = Column(Boolean, default=True)
     is_bot_managed = Column(Boolean, default=True, nullable=False)  # False = user took manual control, bot stops touching this position
+    trailing_enabled = Column(Boolean, default=True, nullable=False)  # False = SL pinned to dynamic (sl_after_order3) level, ignores price ticks; SL-hit checks, pyramiding, TP keep working
 
     # Timestamps
     opened_at = Column(DateTime(timezone=True), server_default=func.now())

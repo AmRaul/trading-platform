@@ -50,6 +50,7 @@ class PositionCalculator:
         side: str,
         orders: List[OrderInfo],
         current_price: float,
+        trailing_enabled: bool = True,
     ) -> Tuple[float, str]:
         if not orders:
             return 0.0, "none"
@@ -91,7 +92,7 @@ class PositionCalculator:
             else:
                 dynamic_sl = avg_price * (1 + offset)
 
-        if self.config.get("use_trailing", False):
+        if self.config.get("use_trailing", False) and trailing_enabled:
             trailing_pct = self.config["trailing_percent"] / 100
             if side == "LONG":
                 trailing_sl = current_price * (1 - trailing_pct)
