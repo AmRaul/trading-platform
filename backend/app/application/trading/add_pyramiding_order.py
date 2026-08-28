@@ -69,7 +69,10 @@ class AddPyramidingOrderUseCase:
 
         avg_price = calculator.calculate_average_price(calculator.orders)
         total_size = calculator.get_total_size()
-        sl_price, _ = calculator.calculate_stop_loss(bot.side, calculator.orders, fill_price)
+        sl_price, _ = calculator.calculate_stop_loss(
+            bot.side, calculator.orders, fill_price,
+            trailing_enabled=position.trailing_enabled,
+        )
 
         position.average_price = avg_price
         position.total_size = total_size

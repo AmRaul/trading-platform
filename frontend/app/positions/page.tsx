@@ -36,6 +36,18 @@ export default function PositionsPage() {
     setManagedMutation.mutate({ id: pos.id, is_bot_managed: !pos.is_bot_managed });
   };
 
+  const setTrailingMutation = useMutation({
+    mutationFn: ({ id, trailing_enabled }: { id: number; trailing_enabled: boolean }) =>
+      positionsApi.setTrailingFrozen(id, trailing_enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['positions'] });
+    },
+  });
+
+  const handleToggleTrailing = (pos: any) => {
+    setTrailingMutation.mutate({ id: pos.id, trailing_enabled: !pos.trailing_enabled });
+  };
+
   useEffect(() => {
     // Subscribe to price updates
     const unsubscribe = wsClient.subscribe('price_update', (data) => {
@@ -108,6 +120,11 @@ export default function PositionsPage() {
                         >
                           {pos.is_bot_managed ? 'Bot managed' : 'Manual control'}
                         </span>
+                        {!pos.trailing_enabled && (
+                          <span className="inline-block px-3 py-1 rounded text-sm font-medium bg-cyan-900 text-cyan-300">
+                            Trailing off
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -128,17 +145,32 @@ export default function PositionsPage() {
                         {pnlPercent >= 0 ? '+' : ''}
                         {pnlPercent.toFixed(2)}%
                       </p>
-                      <button
-                        onClick={() => handleToggleManaged(pos)}
-                        disabled={setManagedMutation.isPending}
-                        className={`mt-3 px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-50 ${
-                          pos.is_bot_managed
-                            ? 'bg-amber-700 hover:bg-amber-600 text-white'
-                            : 'bg-blue-700 hover:bg-blue-600 text-white'
-                        }`}
-                      >
-                        {pos.is_bot_managed ? 'Взять под ручное управление' : 'Вернуть боту'}
-                      </button>
+                      <div className="flex flex-col gap-2 mt-3">
+                        <button
+                          onClick={() => handleToggleManaged(pos)}
+                          disabled={setManagedMutation.isPending}
+                          className={`px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-50 ${
+                            pos.is_bot_managed
+                              ? 'bg-amber-700 hover:bg-amber-600 text-white'
+                              : 'bg-blue-700 hover:bg-blue-600 text-white'
+                          }`}
+                        >
+                          {pos.is_bot_managed ? 'Взять под ручное управление' : 'Вернуть боту'}
+                        </button>
+                        {pos.is_bot_managed && (
+                          <button
+                            onClick={() => handleToggleTrailing(pos)}
+                            disabled={setTrailingMutation.isPending}
+                            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-50 ${
+                              !pos.trailing_enabled
+                                ? 'bg-cyan-700 hover:bg-cyan-600 text-white'
+                                : 'bg-gray-700 hover:bg-gray-600 text-white'
+                            }`}
+                          >
+                            {pos.trailing_enabled ? 'Отключить trailing SL' : 'Включить trailing SL'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 

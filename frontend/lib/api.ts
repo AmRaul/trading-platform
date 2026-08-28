@@ -77,6 +77,9 @@ export const positionsApi = {
 
   setManaged: (position_id: number, is_bot_managed: boolean) =>
     api.patch(`/api/positions/${position_id}/managed`, { is_bot_managed }),
+
+  setTrailingFrozen: (position_id: number, trailing_enabled: boolean) =>
+    api.patch(`/api/positions/${position_id}/trailing`, { trailing_enabled }),
 };
 
 // Trades API

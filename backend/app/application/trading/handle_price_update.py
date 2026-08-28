@@ -25,7 +25,8 @@ class HandlePriceUpdateUseCase:
         )
 
         sl_price, sl_type = calculator.calculate_stop_loss(
-            bot.side, calculator.orders, current_price
+            bot.side, calculator.orders, current_price,
+            trailing_enabled=position.trailing_enabled,
         )
 
         old_sl = position.current_sl
