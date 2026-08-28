@@ -238,7 +238,7 @@ function ResultsView({ results, taskId }: { results: BacktestResults; taskId: st
 // см. services/backtester/strategy.py / indicators.py).
 // ---------------------------------------------------------------------------
 
-type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion' | 'custom';
+type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion' | 'mrc_trend_filtered' | 'custom';
 
 const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   none: 'Без индикатора (только DCA-сетка)',
@@ -246,6 +246,7 @@ const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   volatility_bounce: 'Volatility Bounce (Bollinger + ATR)',
   momentum_trend: 'Momentum + Trend (SuperTrend + Stoch RSI)',
   mrc_reversion: 'MRC Reversion (Mean Reversion Channel)',
+  mrc_trend_filtered: 'MRC + тренд-фильтр (4H EMA + 1H/15m MRC)',
   custom: 'Свой набор — выбрать индикаторы вручную',
 };
 
@@ -269,6 +270,11 @@ interface FormState {
   dca_step_percent: number;
   martingale_enabled: boolean;
   martingale_multiplier: number;
+  pyramid_enabled: boolean;
+  pyramid_max_orders: number;
+  pyramid_step_percent: number;
+  pyramid_size_progression: 'decreasing' | 'fixed';
+  pyramid_size_multiplier: number;
   tp_enabled: boolean;
   tp_percent: number;
   sl_enabled: boolean;
@@ -299,6 +305,11 @@ interface FormState {
   mrc_gradsize: number;
   mrc_entry_band: number;
   mrc_source: 'hlc3' | 'close' | 'ohlc4';
+  // mrc_trend_filtered — MRC вход (mrc_length/inner/outer/gradsize/source общие
+  // с mrc_reversion) + тренд-фильтр на отдельном, более старшем таймфрейме
+  trend_timeframe: string;
+  mtf_entry_band: '1' | '2' | '1_2';
+  mtf_trend_ema_period: number;
   // custom — свой набор индикаторов
   custom_selected: Record<CustomIndicatorKey, boolean>;
   custom_ema_mode: 'cross' | 'price_vs_ema';
@@ -353,6 +364,11 @@ const DEFAULT_FORM: FormState = {
   dca_step_percent: 1.55,
   martingale_enabled: true,
   martingale_multiplier: 2.0,
+  pyramid_enabled: false,
+  pyramid_max_orders: 3,
+  pyramid_step_percent: 1.5,
+  pyramid_size_progression: 'decreasing',
+  pyramid_size_multiplier: 0.5,
   tp_enabled: true,
   tp_percent: 0.97,
   sl_enabled: false,
@@ -378,6 +394,9 @@ const DEFAULT_FORM: FormState = {
   mrc_outer_mult: 2.415,
   mrc_gradsize: 0.5,
   mrc_entry_band: 2,
+  trend_timeframe: '4h',
+  mtf_entry_band: '1_2',
+  mtf_trend_ema_period: 21,
   mrc_source: 'hlc3',
   custom_selected: { ema: true, rsi: true, bollinger_bands: false, atr: false, supertrend: false, stochastic_rsi: false, adx: false },
   custom_ema_mode: 'cross',
@@ -421,6 +440,14 @@ function buildConfig(f: FormState): object {
       max_orders: f.dca_max_orders,
       step_price: { type: 'fixed_percent', value: f.dca_step_percent },
       martingale: { enabled: f.martingale_enabled, multiplier: f.martingale_multiplier },
+    },
+    pyramid: {
+      enabled: f.pyramid_enabled,
+      max_orders: f.pyramid_max_orders,
+      trigger: { type: 'fixed_percent', value: f.pyramid_step_percent },
+      size_progression: f.pyramid_size_progression,
+      size_multiplier: f.pyramid_size_multiplier,
+      stop_advance: 'to_prev_entry',
     },
     take_profit: {
       enabled: f.tp_enabled,
@@ -479,6 +506,23 @@ function buildConfig(f: FormState): object {
         gradsize: f.mrc_gradsize,
         entry_band: f.mrc_entry_band,
         source: f.mrc_source,
+      },
+    };
+  } else if (f.indicator === 'mrc_trend_filtered') {
+    // Третий, независимый таймфрейм (реальные биржевые свечи, не ресемплинг —
+    // см. backtester.py/data_loader.py) для тренд-фильтра поверх MRC-входа.
+    config.trend_timeframe = f.trend_timeframe;
+    config.indicators = {
+      enabled: true,
+      strategy_type: 'mrc_trend_filtered',
+      mrc_trend_filtered: {
+        length: f.mrc_length,
+        inner_mult: f.mrc_inner_mult,
+        outer_mult: f.mrc_outer_mult,
+        gradsize: f.mrc_gradsize,
+        entry_band: f.mtf_entry_band === '1_2' ? [1, 2] : parseInt(f.mtf_entry_band, 10),
+        source: f.mrc_source,
+        trend_ema_period: f.mtf_trend_ema_period,
       },
     };
   } else if (f.indicator === 'custom') {
@@ -632,6 +676,56 @@ function IndicatorFields({ form, setForm }: { form: FormState; setForm: (updater
             <option value="ohlc4">ohlc4</option>
           </select>
         </Field>
+      </div>
+    );
+  }
+
+  if (form.indicator === 'mrc_trend_filtered') {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-gray-500">
+          Вход только когда тренд на старшем ТФ совпадает с направлением: цена выше EMA (4H) + MRC на
+          основном ТФ ({form.timeframe}) коснулся выбранной полосы. Тренд-ТФ грузится реальными биржевыми
+          свечами (не ресемплинг), как в live-боте.
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Тренд-таймфрейм">
+            <select value={form.trend_timeframe} onChange={e => setForm(f => ({ ...f, trend_timeframe: e.target.value }))} className={inputCls}>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </Field>
+          <NumberField label="Тренд EMA период" value={form.mtf_trend_ema_period} onChange={set('mtf_trend_ema_period')} />
+          <Field label="MRC entry band">
+            <select
+              value={form.mtf_entry_band}
+              onChange={(e) => set('mtf_entry_band')(e.target.value as FormState['mtf_entry_band'])}
+              className={inputCls}
+            >
+              <option value="1">1 — лёгкий выход за внешнюю полосу</option>
+              <option value="2">2 — цена дошла до внешней полосы</option>
+              <option value="1_2">1 или 2 — любая из двух (шире вход)</option>
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="MRC Length" value={form.mrc_length} onChange={set('mrc_length')} />
+          <NumberField label="Inner mult" value={form.mrc_inner_mult} onChange={set('mrc_inner_mult')} step={0.01} />
+          <NumberField label="Outer mult" value={form.mrc_outer_mult} onChange={set('mrc_outer_mult')} step={0.001} />
+          <NumberField label="Gradsize" value={form.mrc_gradsize} onChange={set('mrc_gradsize')} step={0.01} />
+          <Field label="Source">
+            <select
+              value={form.mrc_source}
+              onChange={(e) => set('mrc_source')(e.target.value as FormState['mrc_source'])}
+              className={inputCls}
+            >
+              <option value="hlc3">hlc3</option>
+              <option value="close">close</option>
+              <option value="ohlc4">ohlc4</option>
+            </select>
+          </Field>
+        </div>
       </div>
     );
   }
@@ -944,6 +1038,41 @@ export default function BacktesterPage() {
                       </Field>
                       {form.martingale_enabled && (
                         <NumberField label="Множитель" value={form.martingale_multiplier} onChange={v => setForm(f => ({ ...f, martingale_multiplier: v }))} step={0.1} />
+                      )}
+                    </>
+                  )}
+                </div>
+              </Section>
+
+              <Section title="Пирамидинг" defaultOpen={false}>
+                <p className="text-xs text-gray-500">
+                  В отличие от DCA (усреднение в убытке), пирамидинг докупает ПО тренду — когда цена уже
+                  пошла в прибыль от последнего входа. Размер каждой докупки по умолчанию убывающий, а Stop
+                  Loss подтягивается к цене предыдущего входа при каждом добавлении.
+                </p>
+                <div className="grid grid-cols-4 gap-3">
+                  <Field label="Пирамидинг">
+                    <select value={form.pyramid_enabled ? '1' : '0'} onChange={e => setForm(f => ({ ...f, pyramid_enabled: e.target.value === '1' }))} className={inputCls}>
+                      <option value="0">Выключен</option>
+                      <option value="1">Включён</option>
+                    </select>
+                  </Field>
+                  {form.pyramid_enabled && (
+                    <>
+                      <NumberField label="Максимум ордеров" value={form.pyramid_max_orders} onChange={v => setForm(f => ({ ...f, pyramid_max_orders: v }))} />
+                      <NumberField label="Шаг добора (%, от последнего входа)" value={form.pyramid_step_percent} onChange={v => setForm(f => ({ ...f, pyramid_step_percent: v }))} step={0.01} />
+                      <Field label="Размер ордеров">
+                        <select
+                          value={form.pyramid_size_progression}
+                          onChange={e => setForm(f => ({ ...f, pyramid_size_progression: e.target.value as FormState['pyramid_size_progression'] }))}
+                          className={inputCls}
+                        >
+                          <option value="decreasing">Убывающий</option>
+                          <option value="fixed">Фиксированный (= первому ордеру)</option>
+                        </select>
+                      </Field>
+                      {form.pyramid_size_progression === 'decreasing' && (
+                        <NumberField label="Множитель убывания" value={form.pyramid_size_multiplier} onChange={v => setForm(f => ({ ...f, pyramid_size_multiplier: v }))} step={0.1} />
                       )}
                     </>
                   )}

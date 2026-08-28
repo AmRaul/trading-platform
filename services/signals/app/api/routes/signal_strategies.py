@@ -87,7 +87,12 @@ async def update_strategy(strategy_id: int, data: StrategyUpdate, db: AsyncSessi
         raise HTTPException(status_code=404, detail="Strategy not found")
     if strategy.is_builtin:
         raise HTTPException(status_code=403, detail="Cannot modify built-in strategy")
-    for field, value in data.model_dump(exclude_none=True).items():
+    # exclude_unset (not exclude_none) — a client sending an explicit null
+    # for an optional filter field (e.g. range_max) must be able to clear
+    # it, not have the key silently dropped before the setattr loop.
+    for field, value in data.model_dump(exclude_unset=True).items():
+        if field == "side" and value is not None:
+            value = value.upper()
         setattr(strategy, field, value)
     await db.commit()
     await db.refresh(strategy)

@@ -709,7 +709,14 @@ class TradingStrategy:
         base_quantity = base_position_size / price
 
         # Для DCA ордеров применяем мартингейл к КОЛИЧЕСТВУ монет
-        if is_dca and self.martingale_enabled:
+        # (is_pyramid проверяем первым явно — пирамид-ордера тоже помечены
+        # is_dca=True, но должны идти по своей ветке даже если пользователь
+        # одновременно включил dca.martingale и pyramid в одном конфиге)
+        if is_pyramid:
+            # Пирамидинг: убывающий (по умолчанию) размер ордера относительно базового
+            multiplier = self._calculate_pyramid_size_multiplier(pyramid_level)
+            order_quantity = base_quantity * multiplier
+        elif is_dca and self.martingale_enabled:
             if self.martingale_progression == 'exponential':
                 multiplier = self.martingale_multiplier ** dca_level
             elif self.martingale_progression == 'linear':
@@ -717,10 +724,6 @@ class TradingStrategy:
             else:  # fibonacci
                 multiplier = self._fibonacci_multiplier(dca_level)
 
-            order_quantity = base_quantity * multiplier
-        elif is_pyramid:
-            # Пирамидинг: убывающий (по умолчанию) размер ордера относительно базового
-            multiplier = self._calculate_pyramid_size_multiplier(pyramid_level)
             order_quantity = base_quantity * multiplier
         else:
             order_quantity = base_quantity

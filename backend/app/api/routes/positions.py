@@ -161,7 +161,7 @@ async def set_position_trailing(
     for order in orders:
         calculator.add_order(OrderInfo(order.order_number, order.price, order.size))
 
-    position.trailing_enabled = data.trailing_enabled
+    new_sl = position.current_sl
 
     if not data.trailing_enabled and orders:
         # Re-pin current_sl to the dynamic level right now, rather than
@@ -169,10 +169,9 @@ async def set_position_trailing(
         # favorable" comparison in handle_price_update.py would otherwise
         # never step DOWN from an already-favorable trailing level.
         current_price = orders[-1].price
-        sl_price, _ = calculator.calculate_stop_loss(
+        new_sl, _ = calculator.calculate_stop_loss(
             bot.side, calculator.orders, current_price, trailing_enabled=False
         )
-        position.current_sl = sl_price
 
         sl_pct = calculator.calculate_sl_percent(position.order_count)
         max_orders = bot.config.get("order_count", 4)
@@ -194,10 +193,21 @@ async def set_position_trailing(
             sl_percent=sl_pct,
             tp_percent=tp_pct,
         )
+        # Push to the exchange BEFORE touching the DB — if the webhook call
+        # fails, we must not report success while the exchange-side stop is
+        # still the old trailing one. Fail loudly instead of silently
+        # committing a DB state that doesn't match reality.
         if not (update_result and update_result.get("success")):
-            logger.warning(
+            logger.error(
                 f"Failed to push disabled-trailing SL to exchange for position={position.id}"
             )
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to update stop loss on the exchange — trailing was NOT disabled. Try again."
+            )
+
+    position.trailing_enabled = data.trailing_enabled
+    position.current_sl = new_sl
 
     await db.commit()
     await db.refresh(position)

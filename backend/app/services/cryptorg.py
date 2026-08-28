@@ -175,7 +175,7 @@ class CryptorgClient:
                 "value": str(tp_percent) if tp_percent is not None else "0"
             },
         }
-        if sl_percent:
+        if sl_percent is not None:
             params["stop"] = {
                 "enabled": True,
                 "event": "percentage",
