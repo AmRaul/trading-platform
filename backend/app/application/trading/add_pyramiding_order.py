@@ -100,6 +100,13 @@ class AddPyramidingOrderUseCase:
 
         await db.commit()
 
+        # Recompute against the fresh avg_price/total_size from this fill —
+        # position.unrealized_pnl still holds the pre-fill value, and
+        # positions.py/bots.py prefer this Redis state over Postgres, so a
+        # stale value here shows wrong PnL until the next price tick.
+        unrealized_pnl = calculator.calculate_unrealized_pnl(bot.side, avg_price, fill_price, total_size)
+        position.unrealized_pnl = unrealized_pnl
+
         state = {
             "bot_id": bot.id,
             "position_id": position.id,
@@ -108,14 +115,12 @@ class AddPyramidingOrderUseCase:
             "average_price": avg_price,
             "total_size": total_size,
             "current_sl": sl_price,
-            "unrealized_pnl": position.unrealized_pnl,
+            "unrealized_pnl": unrealized_pnl,
             "order_count": order_number,
             "last_order_price": calculator.get_last_order_price(),
             "state": "PYRAMIDING",
         }
         await set_position_state(str(bot.id), state)
-
-        unrealized_pnl = calculator.calculate_unrealized_pnl(bot.side, avg_price, fill_price, total_size)
 
         logger.info(
             f"Pyramiding order added: #{order_number} @ {fill_price} "

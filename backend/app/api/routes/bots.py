@@ -4,6 +4,7 @@ from sqlalchemy import select, and_
 from typing import List
 from app.core.database import get_db
 from app.models import User, Bot, Position, Order, Trade
+from app.models.cryptorg_account import CryptorgAccount
 from app.schemas.bot import BotCreate, BotUpdate, BotResponse, OpenPositionData
 from app.api.deps import get_current_user
 from app.services.cryptorg import cryptorg_client
@@ -140,6 +141,16 @@ async def create_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Create new bot"""
+    if bot_data.account_id is not None:
+        acc_result = await db.execute(
+            select(CryptorgAccount).where(
+                CryptorgAccount.id == bot_data.account_id,
+                CryptorgAccount.user_id == current_user.id,
+            )
+        )
+        if not acc_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Account not found")
+
     bot = Bot(
         user_id=current_user.id,
         account_id=bot_data.account_id,
@@ -189,7 +200,19 @@ async def update_bot(
     if bot_data.is_active is not None:
         bot.is_active = bot_data.is_active
 
-    if bot_data.account_id is not None:
+    # account_id uses model_fields_set (not `is not None`) so an explicit
+    # null in the request body actually detaches the account — the frontend
+    # sends account_id: null for "— Без аккаунта —" and expects it to stick.
+    if 'account_id' in bot_data.model_fields_set:
+        if bot_data.account_id is not None:
+            acc_result = await db.execute(
+                select(CryptorgAccount).where(
+                    CryptorgAccount.id == bot_data.account_id,
+                    CryptorgAccount.user_id == current_user.id,
+                )
+            )
+            if not acc_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Account not found")
         bot.account_id = bot_data.account_id
 
     await db.commit()

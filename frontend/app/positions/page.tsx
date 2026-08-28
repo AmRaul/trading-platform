@@ -42,6 +42,10 @@ export default function PositionsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['positions'] });
     },
+    onError: (error: any) => {
+      const detail = error?.response?.data?.detail || 'Не удалось изменить trailing SL';
+      window.alert(`Ошибка: ${detail}\n\nБиржа могла не подтвердить изменение — состояние на бирже не поменялось.`);
+    },
   });
 
   const handleToggleTrailing = (pos: any) => {
