@@ -796,6 +796,102 @@ class IndicatorStrategy:
             }
         }
 
+    def mrc_trend_filtered_signal(self, data: pd.DataFrame, config: dict, trend_data: pd.DataFrame) -> dict:
+        """
+        Стратегия: MRC вход (1H) отфильтрованный трендом на старшем ТФ (4H EMA).
+
+        Гипотеза: цена находится НАД EMA на трендовом ТФ (структурный uptrend) —
+        входим в LONG только когда 1H MRC коснулся band 1 или band 2 oversold
+        (перепроданность внутри восходящего тренда, а не разворот тренда).
+        Зеркально для SHORT: цена ПОД EMA + MRC band 1/2 overbought.
+
+        В отличие от mrc_reversion_signal (одна полоса entry_band), здесь
+        считаем МЕНЕЕ строгим условие "band 1 ИЛИ band 2" через abs(risk_zone),
+        т.к. цель — не поймать точный экстремум, а войти по тренду на любом
+        заметном отклонении от средней (см. risk_zone кодировку в calculate_mrc:
+        1=light, 2=medium, 3=extreme overbought/oversold, 4=near mean, 5=extreme дальше band2_1).
+
+        Args:
+            data: DataFrame OHLCV трейдингового (MRC) таймфрейма, напр. 1H
+            config: конфигурация — mrc-параметры (length, inner_mult, outer_mult,
+                    gradsize, source) + trend_ema_period (EMA период на trend_data)
+            trend_data: DataFrame OHLCV трендового таймфрейма, напр. 4H —
+                    ПОСЛЕДНЯЯ строка должна быть последней ЗАКРЫТОЙ свечой
+                    (защиту от look-ahead bias обеспечивает вызывающий код —
+                    backtester.py находит parent-свечу через get_parent_candle_index)
+
+        Returns:
+            dict с сигналами и значениями индикаторов (MRC + trend EMA)
+        """
+        length = config.get('length', 200)
+        inner_mult = config.get('inner_mult', 1.0)
+        outer_mult = config.get('outer_mult', 2.415)
+        gradsize = config.get('gradsize', 0.5)
+        entry_bands = config.get('entry_band', [1, 2])
+        if isinstance(entry_bands, int):
+            entry_bands = [entry_bands]
+        source = config.get('source', 'hlc3')
+        trend_ema_period = config.get('trend_ema_period', 21)
+
+        safe_return = {
+            'long_signal': False,
+            'short_signal': False,
+            'risk_zone': 0,
+            'trend_up': False,
+            'trend_down': False,
+            'indicators': {
+                'meanline': 0, 'meanrange': 0, 'upband2': 0, 'loband2': 0, 'risk_zone': 0,
+                'trend_ema': 0, 'trend_price': 0,
+            }
+        }
+
+        if len(data) == 0 or len(data) < length:
+            return safe_return
+        if trend_data is None or len(trend_data) < trend_ema_period:
+            return safe_return
+
+        trend_ema = self.indicators.calculate_ema(trend_data['close'], trend_ema_period, cache_key=None)
+        if len(trend_ema) == 0 or pd.isna(trend_ema.iloc[-1]):
+            return safe_return
+
+        trend_ema_current = trend_ema.iloc[-1]
+        trend_price_current = trend_data['close'].iloc[-1]
+        trend_up = trend_price_current > trend_ema_current
+        trend_down = trend_price_current < trend_ema_current
+
+        mrc = self.indicators.calculate_mrc(
+            data, length=length, inner_mult=inner_mult, outer_mult=outer_mult,
+            gradsize=gradsize, source=source, cache_key=None
+        )
+        if len(mrc) == 0:
+            return safe_return
+
+        risk_zone_current = int(mrc['risk_zone'].iloc[-1])
+
+        # LONG: тренд вверх (4H) + MRC оversold band 1 или 2 (risk_zone отрицательный)
+        long_signal = trend_up and (-risk_zone_current in entry_bands)
+        # SHORT: тренд вниз (4H) + MRC overbought band 1 или 2 (risk_zone положительный)
+        short_signal = trend_down and (risk_zone_current in entry_bands)
+
+        return {
+            'long_signal': long_signal,
+            'short_signal': short_signal,
+            'risk_zone': risk_zone_current,
+            'trend_up': trend_up,
+            'trend_down': trend_down,
+            'indicators': {
+                'meanline': mrc['meanline'].iloc[-1],
+                'meanrange': mrc['meanrange'].iloc[-1],
+                'upband2': mrc['upband2'].iloc[-1],
+                'loband2': mrc['loband2'].iloc[-1],
+                'risk_zone': risk_zone_current,
+                'trend_ema': trend_ema_current,
+                'trend_price': trend_price_current,
+                'meanline_series': mrc['meanline'],
+                'risk_zone_series': mrc['risk_zone'],
+            }
+        }
+
     def custom_signal(self, data: pd.DataFrame, config: dict) -> dict:
         """
         Кастомная стратегия с возможностью выбора любой комбинации индикаторов

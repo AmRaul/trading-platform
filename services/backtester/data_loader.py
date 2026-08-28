@@ -52,11 +52,11 @@ class DataLoader:
                 raise ValueError(f"Отсутствуют обязательные колонки: {missing_columns}")
             
             # Конвертируем timestamp в datetime
-            if df['timestamp'].dtype == 'object':
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-            elif df['timestamp'].dtype in ['int64', 'float64']:
-                # Предполагаем, что это Unix timestamp
+            # Числовой dtype = Unix timestamp, иначе (object в pandas<3, str в pandas>=3) — строка с датой
+            if pd.api.types.is_numeric_dtype(df['timestamp']):
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+            else:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
             
             # Сортируем по времени
             df = df.sort_values('timestamp').reset_index(drop=True)
@@ -616,6 +616,46 @@ class DataLoader:
         print(f"{'='*60}\n")
 
         return execution_data, strategy_data
+
+    def load_trend_timeframe(self,
+                            symbol: str,
+                            trend_timeframe: str,
+                            start_date: str = None,
+                            end_date: str = None,
+                            exchange: str = 'binance',
+                            market_type: str = 'spot') -> pd.DataFrame:
+        """
+        Загружает РЕАЛЬНЫЕ свечи трендового таймфрейма (напр. 4H) напрямую с биржи —
+        не ресемплинг из более мелкого ТФ. Нужно чтобы бэктест видел ТЕ ЖЕ 4H бары,
+        что и live TrendDetector (services/signals), который тоже тянет 4H с биржи
+        напрямую, а не ресемплит из 1H (границы 4H-баров на бирже фиксированы по UTC
+        00:00/04:00/08:00..., и ресемплинг из произвольного 1H-среза может их не
+        совпасть, если 1H данные не выровнены на ту же сетку).
+
+        Использует отдельный DataLoader (не self), чтобы не затирать self.data,
+        загруженный для execution/strategy таймфреймов.
+
+        Args:
+            symbol: торговая пара (например, 'BTC/USDT')
+            trend_timeframe: таймфрейм тренд-фильтра ('4h', '1d', etc.)
+            start_date: начальная дата
+            end_date: конечная дата
+            exchange: название биржи
+            market_type: тип рынка ('spot', 'futures', 'swap')
+
+        Returns:
+            DataFrame с trend-таймфрейм свечами
+        """
+        trend_loader = DataLoader()
+        trend_data = trend_loader.load_from_api(
+            symbol=symbol,
+            timeframe=trend_timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            exchange=exchange,
+            market_type=market_type
+        )
+        return trend_data
 
     def get_summary(self) -> dict:
         """

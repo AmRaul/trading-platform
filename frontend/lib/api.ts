@@ -74,6 +74,9 @@ export const positionsApi = {
 
   getByBot: (bot_id: number) =>
     api.get(`/api/positions/bot/${bot_id}`),
+
+  setManaged: (position_id: number, is_bot_managed: boolean) =>
+    api.patch(`/api/positions/${position_id}/managed`, { is_bot_managed }),
 };
 
 // Trades API

@@ -32,6 +32,8 @@ class Order:
     status: OrderStatus = OrderStatus.PENDING
     is_dca: bool = False
     dca_level: int = 0
+    is_pyramid: bool = False
+    pyramid_level: int = 0
 
 @dataclass
 class Position:
@@ -43,7 +45,8 @@ class Position:
     current_price: float = 0.0
     unrealized_pnl: float = 0.0
     orders: List[Order] = None
-    
+    pyramid_stop_price: Optional[float] = None  # SL, подтянутый пирамидингом (переопределяет avg_price*(1±sl%))
+
     def __post_init__(self):
         if self.orders is None:
             self.orders = []
@@ -130,7 +133,21 @@ class TradingStrategy:
         self.step_price_value = self.step_price_config.get('value', 1.5) / 100
         self.step_price_dynamic_multiplier = self.step_price_config.get('dynamic_multiplier', 1.0)
         self.step_price_atr_multiplier = self.step_price_config.get('atr_multiplier')
-        
+
+        # Пирамидинг — добавление к позиции ПО тренду (в прибыли), в отличие от DCA (в убытке)
+        self.pyramid_config = config.get('pyramid', {})
+        self.pyramid_enabled = self.pyramid_config.get('enabled', False)
+        self.max_pyramid_orders = self.pyramid_config.get('max_orders', 3)
+
+        self.pyramid_trigger_config = self.pyramid_config.get('trigger', {})
+        self.pyramid_trigger_type = self.pyramid_trigger_config.get('type', 'fixed_percent')
+        self.pyramid_trigger_value = self.pyramid_trigger_config.get('value', 1.5) / 100
+        self.pyramid_trigger_atr_multiplier = self.pyramid_trigger_config.get('atr_multiplier', 1.0)
+
+        self.pyramid_size_progression = self.pyramid_config.get('size_progression', 'decreasing')
+        self.pyramid_size_multiplier = self.pyramid_config.get('size_multiplier', 0.5)
+        self.pyramid_stop_advance = self.pyramid_config.get('stop_advance', 'to_prev_entry')
+
         # Параметры входа
         self.entry_config = config.get('entry_conditions', {})
         self.entry_type = self.entry_config.get('type', 'manual')
@@ -187,34 +204,40 @@ class TradingStrategy:
                     print(f"Индикаторы включены: {self.indicator_strategy}")
                     print(f"Конфигурация: {self.indicator_config}")
     
-    def should_enter_position(self, current_data: pd.Series, historical_data: pd.DataFrame) -> bool:
+    def should_enter_position(self, current_data: pd.Series, historical_data: pd.DataFrame,
+                               historical_trend_data: pd.DataFrame = None) -> bool:
         """
         Определяет, следует ли входить в позицию
-        
+
         Args:
             current_data: текущие данные (строка из DataFrame)
             historical_data: исторические данные для анализа
-            
+            historical_trend_data: исторические данные третьего (трендового) таймфрейма,
+                напр. 4H для EMA-фильтра — опционально, нужно только стратегиям вида
+                mrc_trend_filtered
+
         Returns:
             True если следует входить в позицию
         """
         if self.has_open_position():
             return False
-        
+
         # Если индикаторы включены, используем их логику
         if self.indicators_enabled and INDICATORS_AVAILABLE:
-            return self._indicator_based_entry_logic(current_data, historical_data)
-        
+            return self._indicator_based_entry_logic(current_data, historical_data, historical_trend_data)
+
         # Иначе используем базовую логику
         return self._basic_entry_logic(current_data, historical_data)
-    
-    def _indicator_based_entry_logic(self, current_data: pd.Series, historical_data: pd.DataFrame) -> bool:
+
+    def _indicator_based_entry_logic(self, current_data: pd.Series, historical_data: pd.DataFrame,
+                                      historical_trend_data: pd.DataFrame = None) -> bool:
         """
         Логика входа на основе технических индикаторов
 
         Args:
             current_data: текущие данные
             historical_data: исторические данные
+            historical_trend_data: исторические данные трендового ТФ (см. should_enter_position)
 
         Returns:
             True если следует входить в позицию
@@ -265,6 +288,21 @@ class TradingStrategy:
             elif self.indicator_strategy == 'mrc_reversion':
                 signal_data = self.indicator_strategy_handler.mrc_reversion_signal(
                     historical_data, self.indicator_config
+                )
+
+                if self.order_type == OrderType.LONG:
+                    return signal_data['long_signal']
+                else:
+                    return signal_data['short_signal']
+
+            elif self.indicator_strategy == 'mrc_trend_filtered':
+                if historical_trend_data is None:
+                    if self.verbose:
+                        print("mrc_trend_filtered требует historical_trend_data (trend_timeframe в конфиге)")
+                    return False
+
+                signal_data = self.indicator_strategy_handler.mrc_trend_filtered_signal(
+                    historical_data, self.indicator_config, historical_trend_data
                 )
 
                 if self.order_type == OrderType.LONG:
@@ -335,10 +373,11 @@ class TradingStrategy:
         """
         if not self.dca_enabled or not position:
             return False
-        
-        # Считаем количество уже размещенных DCA ордеров
-        dca_orders_count = sum(1 for order in position.orders if order.is_dca and order.status == OrderStatus.FILLED)
-        
+
+        # Считаем количество уже размещенных DCA ордеров (пирамид-ордера не считаем — свой лимит)
+        dca_orders_count = sum(1 for order in position.orders
+                                if order.is_dca and not order.is_pyramid and order.status == OrderStatus.FILLED)
+
         if dca_orders_count >= self.max_dca_orders:
             return False
         
@@ -412,9 +451,98 @@ class TradingStrategy:
                     return (atr / historical_data['close'].iloc[-1]) * atr_multiplier
                 else:
                     return base_step
-        
+
         return base_step
-    
+
+    def should_add_pyramid_order(self, current_price: float, position: Position, historical_data: pd.DataFrame = None) -> bool:
+        """
+        Определяет, следует ли добавить пирамид-ордер (докупка ПО тренду, в прибыли)
+
+        В отличие от DCA (усреднение в убытке), пирамидинг добавляет объём
+        когда цена уже прошла в нужную сторону — триггер считается от цены
+        ПОСЛЕДНЕГО исполненного ордера, а не от средней (иначе шаг "съезжает"
+        по мере роста position.average_price).
+
+        Args:
+            current_price: текущая цена
+            position: открытая позиция
+            historical_data: исторические данные для расчета ATR-шага
+
+        Returns:
+            True если следует добавить пирамид-ордер
+        """
+        if not self.pyramid_enabled or not position:
+            return False
+
+        pyramid_orders_count = sum(1 for order in position.orders if order.is_pyramid and order.status == OrderStatus.FILLED)
+
+        if pyramid_orders_count >= self.max_pyramid_orders:
+            return False
+
+        filled_orders = [o for o in position.orders if o.status == OrderStatus.FILLED]
+        if not filled_orders:
+            return False
+        last_entry_price = filled_orders[-1].price
+
+        step_percent = self._calculate_pyramid_step(pyramid_orders_count, historical_data)
+
+        if position.order_type == OrderType.LONG:
+            # Для лонга добавляем пирамид-ордер при росте цены от последнего входа
+            price_rise = (current_price - last_entry_price) / last_entry_price
+            return price_rise >= step_percent
+        else:
+            # Для шорта — при падении цены от последнего входа
+            price_drop = (last_entry_price - current_price) / last_entry_price
+            return price_drop >= step_percent
+
+    def _calculate_pyramid_step(self, pyramid_level: int, historical_data: pd.DataFrame = None) -> float:
+        """
+        Вычисляет шаг (в %) для следующего пирамид-ордера
+
+        Args:
+            pyramid_level: сколько пирамид-ордеров уже исполнено
+            historical_data: исторические данные для ATR-шага
+
+        Returns:
+            Процент шага для пирамидинга
+        """
+        base_step = self.pyramid_trigger_value
+
+        if self.pyramid_trigger_type == 'atr_based' and historical_data is not None:
+            if self.indicators_enabled and INDICATORS_AVAILABLE:
+                atr = self.indicators.calculate_atr(
+                    historical_data['high'],
+                    historical_data['low'],
+                    historical_data['close'],
+                    14,
+                    None  # без кэша — идентично DCA atr_based
+                )
+                current_atr = atr.iloc[-1]
+                current_price = historical_data['close'].iloc[-1]
+
+                if current_atr > 0 and current_price > 0:
+                    atr_percent = (current_atr / current_price) * 100
+                    return atr_percent * self.pyramid_trigger_atr_multiplier
+            return base_step
+
+        return base_step
+
+    def _calculate_pyramid_size_multiplier(self, pyramid_level: int) -> float:
+        """
+        Вычисляет мультипликатор размера для пирамид-ордера (обычно убывающий —
+        в отличие от мартингейла, где объём растёт по мере убытка).
+
+        Args:
+            pyramid_level: 0-индексированный уровень пирамид-ордера (0 = первое добавление)
+
+        Returns:
+            Мультипликатор от базового order size
+        """
+        if self.pyramid_size_progression == 'decreasing':
+            return self.pyramid_size_multiplier ** (pyramid_level + 1)
+        else:  # 'fixed'
+            return 1.0
+
     def calculate_margin_ratio(self, position: Position, current_price: float) -> float:
         """
         Рассчитывает коэффициент маржи
@@ -528,7 +656,8 @@ class TradingStrategy:
         
         return atr if not pd.isna(atr) else 0
     
-    def calculate_order_quantity(self, price: float, is_dca: bool = False, dca_level: int = 0) -> float:
+    def calculate_order_quantity(self, price: float, is_dca: bool = False, dca_level: int = 0,
+                                  is_pyramid: bool = False, pyramid_level: int = 0) -> float:
         """
         Вычисляет размер ордера с учетом плеча и различных методов расчета
         Мартингейл применяется к количеству монет, а не к долларовой сумме
@@ -540,6 +669,8 @@ class TradingStrategy:
             price: цена исполнения
             is_dca: является ли ордер DCA
             dca_level: уровень DCA ордера
+            is_pyramid: является ли ордер пирамид-добавлением
+            pyramid_level: 0-индексированный уровень пирамид-ордера
 
         Returns:
             Размер ордера (в монетах)
@@ -587,6 +718,10 @@ class TradingStrategy:
                 multiplier = self._fibonacci_multiplier(dca_level)
 
             order_quantity = base_quantity * multiplier
+        elif is_pyramid:
+            # Пирамидинг: убывающий (по умолчанию) размер ордера относительно базового
+            multiplier = self._calculate_pyramid_size_multiplier(pyramid_level)
+            order_quantity = base_quantity * multiplier
         else:
             order_quantity = base_quantity
 
@@ -614,10 +749,11 @@ class TradingStrategy:
                 a, b = b, a + b
             return b
     
-    def create_order(self, timestamp: pd.Timestamp, price: float, is_dca: bool = False, dca_level: int = 0) -> Order:
+    def create_order(self, timestamp: pd.Timestamp, price: float, is_dca: bool = False, dca_level: int = 0,
+                      is_pyramid: bool = False, pyramid_level: int = 0) -> Order:
         """Создает новый ордер"""
-        quantity = self.calculate_order_quantity(price, is_dca, dca_level)
-        
+        quantity = self.calculate_order_quantity(price, is_dca, dca_level, is_pyramid, pyramid_level)
+
         order = Order(
             id=self.order_id_counter,
             timestamp=timestamp,
@@ -625,9 +761,11 @@ class TradingStrategy:
             price=price,
             quantity=quantity,
             is_dca=is_dca,
-            dca_level=dca_level
+            dca_level=dca_level,
+            is_pyramid=is_pyramid,
+            pyramid_level=pyramid_level
         )
-        
+
         self.order_id_counter += 1
         return order
     
@@ -680,9 +818,17 @@ class TradingStrategy:
         else:
             # Добавляем к существующей позиции
             position = self.get_open_position()
+
+            # Подтягиваем SL к цене ПРЕДЫДУЩЕГО входа (до добавления этого ордера)
+            # — классический пирамидинг: стоп двигается за ценой, фиксируя часть прибыли
+            if order.is_pyramid and self.pyramid_stop_advance == 'to_prev_entry':
+                filled_before = [o for o in position.orders if o.status == OrderStatus.FILLED]
+                if filled_before:
+                    position.pyramid_stop_price = filled_before[-1].price
+
             position.orders.append(order)
             position.quantity += order.quantity
-        
+
         return True
     
     def check_intrabar_exit(self, current_data: pd.Series, position: Position) -> Tuple[bool, str, float]:
@@ -723,7 +869,8 @@ class TradingStrategy:
             if self.tp_enabled:
                 tp_price = avg_price * (1 + self.take_profit_percent)
             if self.sl_enabled:
-                sl_price = avg_price * (1 - self.stop_loss_percent)
+                sl_price = position.pyramid_stop_price if position.pyramid_stop_price is not None \
+                    else avg_price * (1 - self.stop_loss_percent)
 
             # Проверяем достижение уровней
             tp_hit = tp_price is not None and high >= tp_price
@@ -750,7 +897,8 @@ class TradingStrategy:
             if self.tp_enabled:
                 tp_price = avg_price * (1 - self.take_profit_percent)
             if self.sl_enabled:
-                sl_price = avg_price * (1 + self.stop_loss_percent)
+                sl_price = position.pyramid_stop_price if position.pyramid_stop_price is not None \
+                    else avg_price * (1 + self.stop_loss_percent)
 
             # Проверяем достижение уровней
             tp_hit = tp_price is not None and low <= tp_price
@@ -852,11 +1000,16 @@ class TradingStrategy:
                 if self.verbose:
                     print(f"✅ TAKE PROFIT (LONG): {profit_percent*100:.2f}% >= {self.take_profit_percent*100:.1f}%")
                 return True, "take_profit"
+            elif self.sl_enabled and position.pyramid_stop_price is not None:
+                if current_price <= position.pyramid_stop_price:
+                    if self.verbose:
+                        print(f"🛑 STOP LOSS (LONG, pyramid): цена ${current_price:.4f} <= стоп ${position.pyramid_stop_price:.4f}")
+                    return True, "stop_loss"
             elif self.sl_enabled and loss_percent >= self.stop_loss_percent:
                 if self.verbose:
                     print(f"🛑 STOP LOSS (LONG): {loss_percent*100:.2f}% >= {self.stop_loss_percent*100:.1f}%")
                 return True, "stop_loss"
-                
+
         else:  # SHORT
             # Для шорт позиции
             profit_percent = (avg_price - current_price) / avg_price
@@ -902,11 +1055,16 @@ class TradingStrategy:
                 if self.verbose:
                     print(f"✅ TAKE PROFIT (SHORT): {profit_percent*100:.2f}% >= {self.take_profit_percent*100:.1f}%")
                 return True, "take_profit"
+            elif self.sl_enabled and position.pyramid_stop_price is not None:
+                if current_price >= position.pyramid_stop_price:
+                    if self.verbose:
+                        print(f"🛑 STOP LOSS (SHORT, pyramid): цена ${current_price:.4f} >= стоп ${position.pyramid_stop_price:.4f}")
+                    return True, "stop_loss"
             elif self.sl_enabled and loss_percent >= self.stop_loss_percent:
                 if self.verbose:
                     print(f"🛑 STOP LOSS (SHORT): {loss_percent*100:.2f}% >= {self.stop_loss_percent*100:.1f}%")
                 return True, "stop_loss"
-        
+
         return False, ""
     
     def close_position(self, current_price: float, timestamp: pd.Timestamp, reason: str) -> dict:
@@ -972,7 +1130,8 @@ class TradingStrategy:
             'entry_time': position.orders[0].timestamp,
             'exit_time': timestamp,
             'reason': reason,
-            'dca_orders_count': sum(1 for order in position.orders if order.is_dca),
+            'dca_orders_count': sum(1 for order in position.orders if order.is_dca and not order.is_pyramid),
+            'pyramid_orders_count': sum(1 for order in position.orders if order.is_pyramid),
             'total_orders': len(position.orders)
         }
         
@@ -996,13 +1155,17 @@ class TradingStrategy:
         """Возвращает открытую позицию (если есть)"""
         return self.positions[0] if self.positions else None
     
-    def process_tick(self, current_data: pd.Series, historical_data: pd.DataFrame) -> List[dict]:
+    def process_tick(self, current_data: pd.Series, historical_data: pd.DataFrame,
+                      historical_trend_data: pd.DataFrame = None) -> List[dict]:
         """
         Обрабатывает один тик данных (single timeframe режим)
 
         Args:
             current_data: текущие данные
             historical_data: исторические данные
+            historical_trend_data: исторические данные опционального третьего
+                (трендового) таймфрейма, напр. 4H для EMA-фильтра — только для
+                индикаторных стратегий вида mrc_trend_filtered
 
         Returns:
             Список действий, выполненных на этом тике
@@ -1017,7 +1180,7 @@ class TradingStrategy:
             position.update_unrealized_pnl(current_price)
 
         # Проверяем условия входа
-        if self.should_enter_position(current_data, historical_data):
+        if self.should_enter_position(current_data, historical_data, historical_trend_data):
             order = self.create_order(timestamp, current_price)
             if self.execute_order(order):
                 actions.append({
@@ -1033,7 +1196,7 @@ class TradingStrategy:
             position = self.get_open_position()
 
             if self.should_add_dca_order(current_price, position, historical_data):
-                dca_level = sum(1 for order in position.orders if order.is_dca) + 1
+                dca_level = sum(1 for order in position.orders if order.is_dca and not order.is_pyramid) + 1
                 dca_order = self.create_order(timestamp, current_price, is_dca=True, dca_level=dca_level)
 
                 if self.execute_order(dca_order):
@@ -1043,6 +1206,21 @@ class TradingStrategy:
                         'price': current_price,
                         'quantity': dca_order.quantity,
                         'dca_level': dca_level,
+                        'timestamp': timestamp
+                    })
+
+            elif self.should_add_pyramid_order(current_price, position, historical_data):
+                pyramid_level = sum(1 for order in position.orders if order.is_pyramid)
+                pyramid_order = self.create_order(timestamp, current_price, is_dca=True,
+                                                   is_pyramid=True, pyramid_level=pyramid_level)
+
+                if self.execute_order(pyramid_order):
+                    actions.append({
+                        'action': 'pyramid_order',
+                        'order_id': pyramid_order.id,
+                        'price': current_price,
+                        'quantity': pyramid_order.quantity,
+                        'pyramid_level': pyramid_level,
                         'timestamp': timestamp
                     })
 
@@ -1097,7 +1275,8 @@ class TradingStrategy:
                          current_exec_data: pd.Series,
                          historical_exec_data: pd.DataFrame,
                          current_strategy_data: pd.Series,
-                         historical_strategy_data: pd.DataFrame) -> List[dict]:
+                         historical_strategy_data: pd.DataFrame,
+                         historical_trend_data: pd.DataFrame = None) -> List[dict]:
         """
         Обрабатывает один тик в dual timeframe режиме (эмуляция TradingView Bar Magnifier)
 
@@ -1111,6 +1290,9 @@ class TradingStrategy:
             historical_exec_data: исторические execution данные (1m)
             current_strategy_data: текущие strategy данные (15m)
             historical_strategy_data: исторические strategy данные (15m)
+            historical_trend_data: исторические данные опционального третьего
+                (трендового) таймфрейма, напр. 4H для EMA-фильтра — только для
+                индикаторных стратегий вида mrc_trend_filtered
 
         Returns:
             Список действий, выполненных на этом тике
@@ -1138,7 +1320,7 @@ class TradingStrategy:
 
             # Проверяем условия входа ТОЛЬКО на новой strategy свече
             if not self.has_open_position():
-                if self.should_enter_position(current_strategy_data, historical_strategy_data):
+                if self.should_enter_position(current_strategy_data, historical_strategy_data, historical_trend_data):
                     # Входим сразу по текущей execution цене
                     order = self.create_order(timestamp, current_price)
                     if self.execute_order(order):
@@ -1156,7 +1338,7 @@ class TradingStrategy:
             position = self.get_open_position()
 
             if self.should_add_dca_order(current_price, position, historical_strategy_data):
-                dca_level = sum(1 for order in position.orders if order.is_dca) + 1
+                dca_level = sum(1 for order in position.orders if order.is_dca and not order.is_pyramid) + 1
                 dca_order = self.create_order(timestamp, current_price, is_dca=True, dca_level=dca_level)
 
                 if self.execute_order(dca_order):
@@ -1166,6 +1348,21 @@ class TradingStrategy:
                         'price': current_price,
                         'quantity': dca_order.quantity,
                         'dca_level': dca_level,
+                        'timestamp': timestamp
+                    })
+
+            elif self.should_add_pyramid_order(current_price, position, historical_strategy_data):
+                pyramid_level = sum(1 for order in position.orders if order.is_pyramid)
+                pyramid_order = self.create_order(timestamp, current_price, is_dca=True,
+                                                   is_pyramid=True, pyramid_level=pyramid_level)
+
+                if self.execute_order(pyramid_order):
+                    actions.append({
+                        'action': 'pyramid_order',
+                        'order_id': pyramid_order.id,
+                        'price': current_price,
+                        'quantity': pyramid_order.quantity,
+                        'pyramid_level': pyramid_level,
                         'timestamp': timestamp
                     })
 
@@ -1190,7 +1387,7 @@ class TradingStrategy:
                     # Проверяем что не превышен лимит входов на одной свече
                     if self.entries_on_current_bar < self.max_entries_per_bar:
                         # Проверяем можем ли войти снова
-                        if self.should_enter_position(current_strategy_data, historical_strategy_data):
+                        if self.should_enter_position(current_strategy_data, historical_strategy_data, historical_trend_data):
                             order = self.create_order(timestamp, current_price)
                             if self.execute_order(order):
                                 self.entries_on_current_bar += 1  # Увеличиваем счетчик
@@ -1224,7 +1421,7 @@ class TradingStrategy:
                     # Проверяем что не превышен лимит входов на одной свече
                     if self.entries_on_current_bar < self.max_entries_per_bar:
                         # Проверяем можем ли войти снова
-                        if self.should_enter_position(current_strategy_data, historical_strategy_data):
+                        if self.should_enter_position(current_strategy_data, historical_strategy_data, historical_trend_data):
                             order = self.create_order(timestamp, current_price)
                             if self.execute_order(order):
                                 self.entries_on_current_bar += 1  # Увеличиваем счетчик
