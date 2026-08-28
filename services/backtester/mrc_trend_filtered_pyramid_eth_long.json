@@ -1,0 +1,70 @@
+{
+  "start_balance": 10000,
+  "leverage": 10,
+  "order_type": "long",
+  "timeframe": "1h",
+  "trend_timeframe": "4h",
+  "commission_rate": 0.0004,
+  "start_date": "2023-01-01",
+  "end_date": "2024-12-31",
+
+  "first_order": {
+    "type": "percent",
+    "amount_percent": 10
+  },
+
+  "dca": {
+    "enabled": false
+  },
+
+  "pyramid": {
+    "enabled": true,
+    "max_orders": 3,
+    "trigger": {
+      "type": "fixed_percent",
+      "value": 1.5
+    },
+    "size_progression": "decreasing",
+    "size_multiplier": 0.5,
+    "stop_advance": "to_prev_entry"
+  },
+
+  "take_profit": {
+    "enabled": true,
+    "percent": 6,
+    "trailing": { "enabled": false }
+  },
+
+  "stop_loss": {
+    "enabled": true,
+    "percent": 4
+  },
+
+  "risk_management": {
+    "max_drawdown_percent": 20,
+    "max_open_positions": 1
+  },
+
+  "indicators": {
+    "enabled": true,
+    "strategy_type": "mrc_trend_filtered",
+    "mrc_trend_filtered": {
+      "length": 200,
+      "inner_mult": 1.0,
+      "outer_mult": 2.415,
+      "gradsize": 0.5,
+      "entry_band": [1, 2],
+      "source": "hlc3",
+      "trend_ema_period": 21
+    }
+  },
+
+  "data_source": {
+    "type": "api",
+    "api": {
+      "exchange": "binance",
+      "symbol": "ETH/USDT",
+      "market_type": "futures"
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "start_balance": 10000,
+  "leverage": 10,
+  "order_type": "long",
+  "timeframe": "15m",
+  "commission_rate": 0.0004,
+  "start_date": "2024-01-01",
+  "end_date": "2024-12-31",
+
+  "first_order": {
+    "type": "percent",
+    "amount_percent": 10
+  },
+
+  "dca": {
+    "enabled": false
+  },
+
+  "pyramid": {
+    "enabled": true,
+    "max_orders": 3,
+    "trigger": {
+      "type": "fixed_percent",
+      "value": 1.5
+    },
+    "size_progression": "decreasing",
+    "size_multiplier": 0.5,
+    "stop_advance": "to_prev_entry"
+  },
+
+  "take_profit": {
+    "enabled": true,
+    "percent": 8,
+    "trailing": { "enabled": false }
+  },
+
+  "stop_loss": {
+    "enabled": true,
+    "percent": 3
+  },
+
+  "risk_management": {
+    "max_drawdown_percent": 20,
+    "max_open_positions": 1
+  },
+
+  "indicators": {
+    "enabled": true,
+    "strategy_type": "trend_momentum",
+    "trend_momentum": {
+      "ema_short": 50,
+      "ema_long": 200,
+      "rsi_period": 14,
+      "rsi_oversold": 30,
+      "rsi_overbought": 70
+    }
+  },
+
+  "data_source": {
+    "type": "api",
+    "api": {
+      "exchange": "binance",
+      "symbol": "SOL/USDT",
+      "market_type": "futures"
+    }
+  }
+}

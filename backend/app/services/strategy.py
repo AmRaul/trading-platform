@@ -188,6 +188,10 @@ class StrategyEngine:
             return
         if not self.position or not self.position.is_open:
             return
+        if not self.position.is_bot_managed:
+            # User took manual control of this position — bot stops touching it
+            # entirely (no SL checks, no pyramiding, no trailing SL/PnL updates).
+            return
 
         cfg = self.bot.config
         orders_count = len(self.calculator.orders)

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { positionsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import { wsClient } from '@/lib/websocket';
@@ -10,12 +10,31 @@ import { usePriceStore } from '@/lib/store';
 export default function PositionsPage() {
   const prices = usePriceStore((state) => state.prices);
   const updatePrice = usePriceStore((state) => state.updatePrice);
+  const queryClient = useQueryClient();
 
   const { data: positions, refetch } = useQuery({
     queryKey: ['positions', true],
     queryFn: async () => (await positionsApi.getAll(true)).data,
     refetchInterval: 5000,
   });
+
+  const setManagedMutation = useMutation({
+    mutationFn: ({ id, is_bot_managed }: { id: number; is_bot_managed: boolean }) =>
+      positionsApi.setManaged(id, is_bot_managed),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['positions'] });
+    },
+  });
+
+  const handleToggleManaged = (pos: any) => {
+    if (pos.is_bot_managed) {
+      const confirmed = window.confirm(
+        `Отключить бота на позиции ${pos.symbol}? Бот перестанет проверять Stop Loss, докупать и обновлять trailing — дальше вести сделку придётся вручную.`
+      );
+      if (!confirmed) return;
+    }
+    setManagedMutation.mutate({ id: pos.id, is_bot_managed: !pos.is_bot_managed });
+  };
 
   useEffect(() => {
     // Subscribe to price updates
@@ -63,20 +82,33 @@ export default function PositionsPage() {
               return (
                 <div
                   key={pos.id}
-                  className="bg-gray-800 rounded-lg border border-gray-700 p-6"
+                  className={`bg-gray-800 rounded-lg border p-6 ${
+                    pos.is_bot_managed ? 'border-gray-700' : 'border-amber-600'
+                  }`}
                 >
                   <div className="flex items-start justify-between mb-6">
                     <div>
                       <h3 className="text-2xl font-bold">{pos.symbol}</h3>
-                      <span
-                        className={`inline-block px-3 py-1 rounded text-sm font-medium mt-2 ${
-                          pos.side === 'LONG'
-                            ? 'bg-green-900 text-green-300'
-                            : 'bg-red-900 text-red-300'
-                        }`}
-                      >
-                        {pos.side}
-                      </span>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span
+                          className={`inline-block px-3 py-1 rounded text-sm font-medium ${
+                            pos.side === 'LONG'
+                              ? 'bg-green-900 text-green-300'
+                              : 'bg-red-900 text-red-300'
+                          }`}
+                        >
+                          {pos.side}
+                        </span>
+                        <span
+                          className={`inline-block px-3 py-1 rounded text-sm font-medium ${
+                            pos.is_bot_managed
+                              ? 'bg-blue-900 text-blue-300'
+                              : 'bg-amber-900 text-amber-300'
+                          }`}
+                        >
+                          {pos.is_bot_managed ? 'Bot managed' : 'Manual control'}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="text-right">
@@ -96,6 +128,17 @@ export default function PositionsPage() {
                         {pnlPercent >= 0 ? '+' : ''}
                         {pnlPercent.toFixed(2)}%
                       </p>
+                      <button
+                        onClick={() => handleToggleManaged(pos)}
+                        disabled={setManagedMutation.isPending}
+                        className={`mt-3 px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-50 ${
+                          pos.is_bot_managed
+                            ? 'bg-amber-700 hover:bg-amber-600 text-white'
+                            : 'bg-blue-700 hover:bg-blue-600 text-white'
+                        }`}
+                      >
+                        {pos.is_bot_managed ? 'Взять под ручное управление' : 'Вернуть боту'}
+                      </button>
                     </div>
                   </div>
 

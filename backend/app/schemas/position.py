@@ -16,8 +16,13 @@ class PositionResponse(BaseModel):
     realized_pnl: float
     order_count: int
     is_open: bool
+    is_bot_managed: bool
     opened_at: datetime
     closed_at: Optional[datetime]
 
     class Config:
         from_attributes = True
+
+
+class PositionManagedUpdate(BaseModel):
+    is_bot_managed: bool

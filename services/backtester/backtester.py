@@ -46,6 +46,10 @@ class Backtester:
         self.execution_data = None
         self.strategy_data = None
 
+        # Trend timeframe (третий, независимый ТФ для тренд-фильтра, напр. 4H EMA)
+        self.trend_timeframe = self.config.get('trend_timeframe')
+        self.trend_data = None
+
         # Для отслеживания прогресса
         self.total_ticks = 0
         self.processed_ticks = 0
@@ -99,6 +103,8 @@ class Backtester:
                 print(f"Execution: {len(self.execution_data)} тиков")
                 print(f"Strategy: {len(self.strategy_data)} свечей\n")
 
+                self._load_trend_data_if_configured(source_config)
+
                 return self.execution_data
 
             elif source_type == 'api':
@@ -136,6 +142,8 @@ class Backtester:
                 print(f"✅ Dual timeframe режим активирован (API)")
                 print(f"Execution TF ({execution_timeframe}): {len(self.execution_data)} тиков")
                 print(f"Strategy TF ({strategy_timeframe}): {len(self.strategy_data)} свечей\n")
+
+                self._load_trend_data_if_configured(source_config)
 
                 return self.execution_data
 
@@ -204,8 +212,52 @@ class Backtester:
             self.total_ticks = len(data)
             print(f"Подготовлено {self.total_ticks} тиков для бэктеста")
 
+            self._load_trend_data_if_configured(source_config)
+
             return data
-    
+
+    def _load_trend_data_if_configured(self, source_config: dict):
+        """
+        Загружает данные трендового таймфрейма (напр. 4H для EMA-фильтра), если
+        в конфиге указан trend_timeframe. Всегда РЕАЛЬНЫЕ свечи с биржи (или
+        отдельный CSV-файл) — не ресемплинг, чтобы совпадать с тем, что видит
+        live TrendDetector (см. load_trend_timeframe в data_loader.py).
+
+        Опционален: если trend_timeframe не задан, self.trend_data остаётся None
+        и все существующие стратегии/конфиги работают без изменений.
+        """
+        if not self.trend_timeframe:
+            return
+
+        source_type = source_config.get('type', 'csv')
+
+        if source_type in ('csv_dual', 'csv'):
+            trend_file = source_config.get('trend_file')
+            if not trend_file:
+                raise ValueError("trend_timeframe указан, но не задан trend_file в data_source")
+            print(f"Загрузка trend timeframe данных из CSV: {trend_file}...")
+            self.trend_data = self.data_loader.load_from_csv(trend_file, self.symbol)
+
+        elif source_type == 'api':
+            api_config = source_config.get('api', {})
+            exchange = api_config.get('exchange', 'binance')
+            api_symbol = api_config.get('symbol', 'BTC/USDT')
+            market_type = api_config.get('market_type', 'spot')
+
+            print(f"Загрузка trend timeframe ({self.trend_timeframe}) данных через API...")
+            self.trend_data = self.data_loader.load_trend_timeframe(
+                symbol=api_symbol,
+                trend_timeframe=self.trend_timeframe,
+                start_date=self.start_date,
+                end_date=self.end_date,
+                exchange=exchange,
+                market_type=market_type
+            )
+        else:
+            raise ValueError(f"trend_timeframe не поддерживается для data_source.type={source_type}")
+
+        print(f"✅ Trend timeframe ({self.trend_timeframe}): {len(self.trend_data)} свечей\n")
+
     def run_backtest(self, data: pd.DataFrame = None, verbose: bool = True) -> dict:
         """
         Запускает бэктест (поддерживает dual timeframe режим)
@@ -284,12 +336,26 @@ class Backtester:
                 historical_exec_data = execution_data.iloc[:i+1]
                 historical_strategy_data = strategy_data.iloc[:parent_idx+1]
 
-                # Обрабатываем тик (передаем оба таймфрейма)
+                # Trend timeframe (опционально, напр. 4H для EMA-фильтра) —
+                # находим последнюю ЗАКРЫТУЮ trend-свечу на момент текущего тика
+                historical_trend_data = None
+                if self.trend_data is not None:
+                    trend_parent_idx = self.data_loader.get_parent_candle_index(
+                        current_timestamp,
+                        self.trend_data,
+                        self.trend_timeframe
+                    )
+                    if trend_parent_idx < 0:
+                        continue  # ещё нет ни одной закрытой trend-свечи
+                    historical_trend_data = self.trend_data.iloc[:trend_parent_idx + 1]
+
+                # Обрабатываем тик (передаем все подключённые таймфреймы)
                 actions = self.strategy.process_tick_dual(
                     current_exec_data,
                     historical_exec_data,
                     current_strategy_data,
-                    historical_strategy_data
+                    historical_strategy_data,
+                    historical_trend_data
                 )
 
                 # Логируем действия
@@ -322,8 +388,20 @@ class Backtester:
                 current_data = data.iloc[i]
                 historical_data = data.iloc[:i+1]
 
+                # Trend timeframe (опционально, напр. 4H для EMA-фильтра)
+                historical_trend_data = None
+                if self.trend_data is not None:
+                    trend_parent_idx = self.data_loader.get_parent_candle_index(
+                        current_data['timestamp'],
+                        self.trend_data,
+                        self.trend_timeframe
+                    )
+                    if trend_parent_idx < 0:
+                        continue  # ещё нет ни одной закрытой trend-свечи
+                    historical_trend_data = self.trend_data.iloc[:trend_parent_idx + 1]
+
                 # Обрабатываем текущий тик
-                actions = self.strategy.process_tick(current_data, historical_data)
+                actions = self.strategy.process_tick(current_data, historical_data, historical_trend_data)
 
                 # Логируем действия
                 self._log_actions(actions, current_data, verbose)

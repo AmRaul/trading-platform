@@ -29,6 +29,7 @@ class Position(Base):
 
     # Status
     is_open = Column(Boolean, default=True)
+    is_bot_managed = Column(Boolean, default=True, nullable=False)  # False = user took manual control, bot stops touching this position
 
     # Timestamps
     opened_at = Column(DateTime(timezone=True), server_default=func.now())
