@@ -4,10 +4,15 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+import logging
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.api.deps import get_admin_user
 from app.models import User, Bot, Position, CryptorgAccount
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -32,6 +37,24 @@ class AdminUserRow(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DesyncedBot(BaseModel):
+    bot_id: int
+    symbol: str
+    state: str
+    owner_username: str
+
+
+class AdminHealth(BaseModel):
+    redis_ok: bool
+    redis_error: Optional[str] = None
+    price_tracker_ok: bool
+    price_tracker_error: Optional[str] = None
+    price_tracker_subscriptions: dict
+    registered_bots_count: int
+    db_active_bots_count: int
+    desynced_bots: List[DesyncedBot]
 
 
 class AdminBotRow(BaseModel):
@@ -133,3 +156,64 @@ async def get_admin_bots(
         )
         for bot, username in rows
     ]
+
+
+@router.get("/health", response_model=AdminHealth)
+async def get_admin_health(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    # Redis
+    redis_ok = False
+    redis_error = None
+    try:
+        redis = await get_redis()
+        await redis.ping()
+        redis_ok = True
+    except Exception as e:
+        redis_error = str(e)
+
+    # price-tracker service
+    price_tracker_ok = False
+    price_tracker_error = None
+    price_tracker_subscriptions: dict = {}
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{settings.PRICE_TRACKER_URL}/health", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                price_tracker_ok = r.status == 200
+            async with session.get(f"{settings.PRICE_TRACKER_URL}/subscriptions", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    price_tracker_subscriptions = await r.json()
+    except Exception as e:
+        price_tracker_error = str(e)
+
+    # DB vs in-memory registration desync — the exact class of bug that
+    # silently drops WAITING/PYRAMIDING bots from price_stream_manager
+    # (e.g. after an unwanted process reload) without touching bot.state
+    # in Postgres, so the two sources of truth quietly diverge.
+    from app.services.websocket import price_stream_manager
+
+    active_result = await db.execute(
+        select(Bot, User.username)
+        .join(User, User.id == Bot.user_id)
+        .where(Bot.state.in_(["WAITING", "PYRAMIDING"]))
+    )
+    active_rows = active_result.all()
+
+    desynced_bots = [
+        DesyncedBot(bot_id=bot.id, symbol=bot.symbol, state=bot.state, owner_username=username)
+        for bot, username in active_rows
+        if bot.id not in price_stream_manager.registered_bots
+    ]
+
+    return AdminHealth(
+        redis_ok=redis_ok,
+        redis_error=redis_error,
+        price_tracker_ok=price_tracker_ok,
+        price_tracker_error=price_tracker_error,
+        price_tracker_subscriptions=price_tracker_subscriptions,
+        registered_bots_count=len(price_stream_manager.registered_bots),
+        db_active_bots_count=len(active_rows),
+        desynced_bots=desynced_bots,
+    )

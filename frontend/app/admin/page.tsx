@@ -57,6 +57,9 @@ export default function AdminPage() {
             <Link href="/admin/bots" className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700">
               Все боты
             </Link>
+            <Link href="/admin/health" className="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700">
+              Health
+            </Link>
           </div>
         </div>
 
