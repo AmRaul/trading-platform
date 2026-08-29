@@ -50,8 +50,6 @@ services:
       - .env
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
     networks:
       - trading_network
     logging:
@@ -63,7 +61,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--proxy-headers", "--forwarded-allow-ips=*"]
+    # No --reload / bind-mounted ./backend here — this is production. --reload
+    # watches the filesystem and restarts the whole process on any file
+    # change, which wipes all in-memory bot state (registered_bots,
+    # strategy_engines) without warning: WAITING/PYRAMIDING bots silently
+    # stop receiving price ticks until something re-registers them. Bind-
+    # mounting ./backend also shadowed the built image's code with whatever
+    # happened to be on the host, and any touch to those files (even an
+    # unrelated one) could trigger a reload. The image already has the code
+    # baked in — no mount, no --reload, uses the Dockerfile's default CMD.
 
   frontend:
     image: ${FRONTEND_IMAGE:-trading-platform-frontend:local}
