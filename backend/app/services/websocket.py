@@ -135,6 +135,15 @@ class PriceStreamManager:
             await self._pubsub.subscribe(channel)
         await self._ensure_listener()
 
+    async def start_price_stream(self, symbol: str, exchange: str = "bybit"):
+        """Subscribe to a symbol's price channel for browser-only display —
+        used by the /ws subscribe_price message (positions page price
+        ticker), independent of whether any bot is trading that symbol.
+        Defaults to bybit, same as register_strategy's fallback.
+        """
+        await self._subscribe_channel(exchange, symbol)
+        await _notify_price_tracker("subscribe", exchange, symbol)
+
     async def _update_strategies(self, symbol: str, price: float):
         for bot_id in list(self.registered_bots):
             engine = self.strategy_engines.get(bot_id)
