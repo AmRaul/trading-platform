@@ -551,7 +551,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 <label className="block text-xs text-gray-400 mb-1">Мультипликатор пир.</label>
                 <input type="number" value={formData.pyramiding_multiplier}
                   onChange={(e) => setFormData({ ...formData, pyramiding_multiplier: parseFloat(e.target.value) })}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="1" />
+                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="0.1" max="3" />
               </div>
             ) : (
               <>
@@ -836,7 +836,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                 <input type="number" value={formData.pyramiding_multiplier}
                   onChange={(e) => setFormData({ ...formData, pyramiding_multiplier: parseFloat(e.target.value) })}
                   className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                  step="0.1" min="1" />
+                  step="0.1" min="0.1" max="3" />
               </div>
             ) : (
               <>
