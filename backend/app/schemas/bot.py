@@ -16,8 +16,10 @@ class StrategyConfig(BaseModel):
     step_percent: float = Field(default=4.0, gt=0, le=50)
     leverage: int = Field(default=10, ge=1, le=125)
 
-    # Pyramiding-specific
-    pyramiding_multiplier: float = Field(default=1.5, ge=1.0, le=3.0)
+    # Pyramiding-specific — multiplier applied to the LAST order's size
+    # (calculate_next_order_size: last.size * multiplier). >1 grows each
+    # add-on, <1 shrinks it (e.g. 0.9 → 90%, 81%, 72.9%...), 1.0 keeps it fixed.
+    pyramiding_multiplier: float = Field(default=1.5, gt=0, le=3.0)
     sl_after_order3: float = Field(default=2.0, gt=0, le=50)
     sl_breakeven_on_order2: bool = Field(default=True)
     sl_breakeven_plus: float = Field(default=0.5, ge=0, le=10)

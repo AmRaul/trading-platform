@@ -183,13 +183,31 @@ class PriceStreamManager:
             async with AsyncSessionLocal() as db:
                 from app.models import Bot, Position
                 from sqlalchemy import select, and_
-                result = await db.execute(
+
+                pyramiding_result = await db.execute(
                     select(Bot)
                     .join(Position, Position.bot_id == Bot.id)
                     .where(and_(Bot.state == "PYRAMIDING", Position.is_open == True))
                 )
-                active_bots = result.scalars().all()
-                logger.info(f"[PriceStream] Restoring {len(active_bots)} strategies")
+                pyramiding_bots = pyramiding_result.scalars().all()
+
+                # WAITING bots have no Position yet (still waiting for their
+                # limit_entry_price to be hit) — no join needed, and joining
+                # here would silently drop them since they have no row in
+                # positions. Without this, a WAITING bot never gets
+                # re-subscribed to price ticks after a backend restart, so
+                # its limit order never triggers even if price already
+                # crossed it hours ago.
+                waiting_result = await db.execute(
+                    select(Bot).where(Bot.state == "WAITING")
+                )
+                waiting_bots = waiting_result.scalars().all()
+
+                active_bots = list(pyramiding_bots) + list(waiting_bots)
+                logger.info(
+                    f"[PriceStream] Restoring {len(pyramiding_bots)} pyramiding + "
+                    f"{len(waiting_bots)} waiting strategies"
+                )
                 for bot in active_bots:
                     try:
                         await self.register_strategy(bot.id)
