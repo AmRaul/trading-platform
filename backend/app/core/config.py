@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     ENCRYPTION_KEY: str = ""
 
+    # Admin access — single-owner dashboard, no role system. /api/admin/*
+    # checks current_user.username against this value.
+    ADMIN_USERNAME: str = ""
+
     # Price Tracker service URL
     PRICE_TRACKER_URL: str = "http://price-tracker:8010"
 
