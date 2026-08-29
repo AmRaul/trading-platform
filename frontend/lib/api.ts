@@ -155,3 +155,10 @@ export const accountsApi = {
     api.put(`/api/accounts/${id}`, data),
   delete: (id: number) => api.delete(`/api/accounts/${id}`),
 };
+
+// Admin API — single-owner access, backend enforces via get_admin_user (403 for anyone else)
+export const adminApi = {
+  getStats: () => api.get('/api/admin/stats'),
+  getUsers: () => api.get('/api/admin/users'),
+  getBots: () => api.get('/api/admin/bots'),
+};
