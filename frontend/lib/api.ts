@@ -161,4 +161,5 @@ export const adminApi = {
   getStats: () => api.get('/api/admin/stats'),
   getUsers: () => api.get('/api/admin/users'),
   getBots: () => api.get('/api/admin/bots'),
+  getHealth: () => api.get('/api/admin/health'),
 };
