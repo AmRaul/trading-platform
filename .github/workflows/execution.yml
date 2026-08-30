@@ -117,6 +117,7 @@ jobs:
               echo "REDIS_URL=${{ secrets.REDIS_URL }}"
               echo "SECRET_KEY=${{ secrets.SECRET_KEY }}"
               echo "ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}"
+              echo "ADMIN_USERNAME=${{ secrets.ADMIN_USERNAME }}"
               echo "BYBIT_TESTNET=false"
               echo "CRYPTORG_BASE_URL=https://api2.cryptorg.net"
               echo 'BACKEND_CORS_ORIGINS=["https://${{ secrets.DOMAIN }}"]'
