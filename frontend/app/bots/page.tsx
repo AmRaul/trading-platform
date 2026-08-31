@@ -364,10 +364,13 @@ function PositionPanel({ bot }: { bot: any }) {
       : average_price * (1 - tpPercent / 100)
     : null;
 
+  // total_size is the position's notional value in USDT (not coin quantity),
+  // so PnL scales with % price move applied to that notional — mirrors
+  // calculate_unrealized_pnl in position_calculator.py.
   const livePnl = currentPrice && average_price && total_size
     ? bot.side === 'LONG'
-      ? (currentPrice - average_price) * total_size
-      : (average_price - currentPrice) * total_size
+      ? (total_size * (currentPrice - average_price)) / average_price
+      : (total_size * (average_price - currentPrice)) / average_price
     : unrealized_pnl;
 
   const fmt = (n: number | null | undefined, digits = 2) =>

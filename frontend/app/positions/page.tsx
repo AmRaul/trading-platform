@@ -83,10 +83,13 @@ export default function PositionsPage() {
           <div className="space-y-6">
             {positions?.map((pos: any) => {
               const currentPrice = prices[pos.symbol];
-              const unrealizedPnl = currentPrice
+              // total_size is the position's notional value in USDT (not coin
+              // quantity), so PnL scales with % price move applied to that
+              // notional — mirrors calculate_unrealized_pnl in position_calculator.py.
+              const unrealizedPnl = currentPrice && pos.average_price
                 ? pos.side === 'LONG'
-                  ? (currentPrice - pos.average_price) * pos.total_size
-                  : (pos.average_price - currentPrice) * pos.total_size
+                  ? (pos.total_size * (currentPrice - pos.average_price)) / pos.average_price
+                  : (pos.total_size * (pos.average_price - currentPrice)) / pos.average_price
                 : pos.unrealized_pnl;
 
               const pnlPercent = currentPrice && pos.average_price
