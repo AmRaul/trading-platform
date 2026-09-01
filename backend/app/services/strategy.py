@@ -4,9 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Bot, Position, Order
 from app.models.cryptorg_account import CryptorgAccount
+from app.models.bybit_account import BybitAccount
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.adapters.cryptorg_executor import CryptorgExecutorAdapter
+from app.adapters.bybit_executor import BybitExecutorAdapter
 from app.adapters.bybit_market_data import BybitMarketDataAdapter
 from app.adapters.websocket_publisher import WebSocketPublisherAdapter
 from app.application.trading.open_position import OpenPositionUseCase
@@ -14,6 +16,7 @@ from app.application.trading.close_position import ClosePositionUseCase
 from app.application.trading.add_pyramiding_order import AddPyramidingOrderUseCase
 from app.application.trading.handle_price_update import HandlePriceUpdateUseCase
 from app.services.cryptorg import get_cryptorg_client
+from app.core.encryption import decrypt
 import logging
 import time
 
@@ -52,15 +55,34 @@ class StrategyEngine:
         if not self.bot:
             raise ValueError(f"Bot {self.bot_id} not found")
 
-        # Load cryptorg account and build executor with the correct webhook URL
-        account = None
-        if self.bot.account_id:
+        # Build the executor for whichever exchange this bot trades on —
+        # OpenPositionUseCase/AddPyramidingOrderUseCase/ClosePositionUseCase
+        # only depend on the ExchangeExecutor protocol, so nothing below this
+        # block needs to know or care which concrete adapter got built.
+        if self.bot.exchange == "bybit":
+            if not self.bot.bybit_account_id:
+                raise ValueError(f"Bot {self.bot_id} has exchange=bybit but no bybit_account_id")
             acc_result = await self.db.execute(
-                select(CryptorgAccount).where(CryptorgAccount.id == self.bot.account_id)
+                select(BybitAccount).where(BybitAccount.id == self.bot.bybit_account_id)
             )
-            account = acc_result.scalar_one_or_none()
+            bybit_account = acc_result.scalar_one_or_none()
+            if not bybit_account:
+                raise ValueError(f"Bot {self.bot_id} bybit_account_id={self.bot.bybit_account_id} not found")
+            executor = BybitExecutorAdapter(
+                api_key=decrypt(bybit_account.api_key),
+                api_secret=decrypt(bybit_account.api_secret),
+                testnet=bybit_account.testnet,
+            )
+        else:
+            # Load cryptorg account and build executor with the correct webhook URL
+            account = None
+            if self.bot.account_id:
+                acc_result = await self.db.execute(
+                    select(CryptorgAccount).where(CryptorgAccount.id == self.bot.account_id)
+                )
+                account = acc_result.scalar_one_or_none()
 
-        executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
+            executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
 
         self._open_uc = OpenPositionUseCase(executor, self._market, self._publisher)
         self._close_uc = ClosePositionUseCase(executor, self._publisher)

@@ -156,6 +156,16 @@ export const accountsApi = {
   delete: (id: number) => api.delete(`/api/accounts/${id}`),
 };
 
+// Bybit Accounts API — direct Bybit API key trading, separate from Cryptorg
+export const bybitAccountsApi = {
+  getAll: () => api.get('/api/bybit-accounts/'),
+  create: (data: { name: string; api_key: string; api_secret: string; testnet?: boolean }) =>
+    api.post('/api/bybit-accounts/', data),
+  update: (id: number, data: { name?: string; api_key?: string; api_secret?: string; testnet?: boolean }) =>
+    api.put(`/api/bybit-accounts/${id}`, data),
+  delete: (id: number) => api.delete(`/api/bybit-accounts/${id}`),
+};
+
 // Admin API — single-owner access, backend enforces via get_admin_user (403 for anyone else)
 export const adminApi = {
   getStats: () => api.get('/api/admin/stats'),

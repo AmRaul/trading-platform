@@ -83,7 +83,9 @@ class BotCreate(BaseModel):
     symbol: str = Field(min_length=1, max_length=20)
     side: str = Field(pattern="^(LONG|SHORT)$")
     config: StrategyConfig
+    exchange: str = Field(default="cryptorg", pattern="^(cryptorg|bybit)$")
     account_id: Optional[int] = None
+    bybit_account_id: Optional[int] = None
 
     @validator('name')
     def validate_name(cls, v):
@@ -115,7 +117,9 @@ class BotUpdate(BaseModel):
     side: Optional[str] = Field(default=None, pattern="^(LONG|SHORT)$")
     config: Optional[StrategyConfig] = None
     is_active: Optional[bool] = None
+    exchange: Optional[str] = Field(default=None, pattern="^(cryptorg|bybit)$")
     account_id: Optional[int] = None
+    bybit_account_id: Optional[int] = None
 
 
 class BotResponse(BaseModel):
@@ -127,7 +131,9 @@ class BotResponse(BaseModel):
     state: str
     is_active: bool
     total_pnl: float
+    exchange: str = "cryptorg"
     account_id: Optional[int] = None
+    bybit_account_id: Optional[int] = None
     limit_entry_price: Optional[float] = None
     created_at: datetime
     started_at: Optional[datetime]
