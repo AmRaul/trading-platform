@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { botsApi, tradingApi, accountsApi } from '@/lib/api';
+import { botsApi, tradingApi, accountsApi, bybitAccountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
 import { Plus, Play, Square, Trash2, Settings, Clock, X } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
@@ -416,7 +416,9 @@ function PositionPanel({ bot }: { bot: any }) {
 
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>(bot.exchange ?? 'cryptorg');
   const [accountId, setAccountId] = useState<number | null>(bot.account_id ?? null);
+  const [bybitAccountId, setBybitAccountId] = useState<number | null>(bot.bybit_account_id ?? null);
   const [formData, setFormData] = useState({
     name: bot.name,
     symbol: bot.symbol,
@@ -446,6 +448,11 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     queryFn: async () => (await accountsApi.getAll()).data,
   });
 
+  const { data: bybitAccounts = [] } = useQuery<any[]>({
+    queryKey: ['bybit-accounts'],
+    queryFn: async () => (await bybitAccountsApi.getAll()).data,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data: any) => botsApi.update(bot.id, data),
     onSuccess: () => {
@@ -458,7 +465,12 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    updateMutation.mutate({ name, symbol, side, config, account_id: accountId });
+    updateMutation.mutate({
+      name, symbol, side, config,
+      exchange,
+      account_id: exchange === 'cryptorg' ? accountId : null,
+      bybit_account_id: exchange === 'bybit' ? bybitAccountId : null,
+    });
   };
 
   return (
@@ -501,18 +513,50 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
             </div>
             <div className="col-span-2">
-              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
-              <select
-                value={accountId ?? ''}
-                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-              >
-                <option value="">— Без аккаунта —</option>
-                {accounts.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
-                ))}
-              </select>
+              <label className="block text-xs text-gray-400 mb-1">Биржа</label>
+              <div className="flex rounded overflow-hidden border border-gray-600">
+                <button type="button"
+                  onClick={() => setExchange('cryptorg')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'cryptorg' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Cryptorg
+                </button>
+                <button type="button"
+                  onClick={() => setExchange('bybit')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Bybit
+                </button>
+              </div>
             </div>
+            {exchange === 'cryptorg' ? (
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+                <select
+                  value={accountId ?? ''}
+                  onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+                >
+                  <option value="">— Без аккаунта —</option>
+                  {accounts.map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
+                <select
+                  value={bybitAccountId ?? ''}
+                  onChange={(e) => setBybitAccountId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+                  required
+                >
+                  <option value="">— Выберите аккаунт —</option>
+                  {bybitAccounts.map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.api_key_hint}){a.testnet ? ' — testnet' : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>
               <select value={formData.side}
@@ -673,7 +717,9 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
 
 function CreateBotModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>('cryptorg');
   const [accountId, setAccountId] = useState<number | null>(null);
+  const [bybitAccountId, setBybitAccountId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     symbol: 'BTCUSDT',
@@ -703,6 +749,11 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     queryFn: async () => (await accountsApi.getAll()).data,
   });
 
+  const { data: bybitAccounts = [] } = useQuery<any[]>({
+    queryKey: ['bybit-accounts'],
+    queryFn: async () => (await bybitAccountsApi.getAll()).data,
+  });
+
   const createMutation = useMutation({
     mutationFn: (data: any) => botsApi.create(data),
     onSuccess: () => {
@@ -724,7 +775,12 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     const { name, symbol, side, sl_enabled, ...rest } = formData;
     const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    createMutation.mutate({ name, symbol, side, config, account_id: accountId });
+    createMutation.mutate({
+      name, symbol, side, config,
+      exchange,
+      account_id: exchange === 'cryptorg' ? accountId : null,
+      bybit_account_id: exchange === 'bybit' ? bybitAccountId : null,
+    });
   };
 
   return (
@@ -777,18 +833,51 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
             </div>
 
             <div className="col-span-2">
-              <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
-              <select
-                value={accountId ?? ''}
-                onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-              >
-                <option value="">— Без аккаунта —</option>
-                {accounts.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
-                ))}
-              </select>
+              <label className="block text-xs text-gray-400 mb-1">Биржа</label>
+              <div className="flex rounded overflow-hidden border border-gray-600">
+                <button type="button"
+                  onClick={() => setExchange('cryptorg')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'cryptorg' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Cryptorg
+                </button>
+                <button type="button"
+                  onClick={() => setExchange('bybit')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Bybit
+                </button>
+              </div>
             </div>
+
+            {exchange === 'cryptorg' ? (
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
+                <select
+                  value={accountId ?? ''}
+                  onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+                >
+                  <option value="">— Без аккаунта —</option>
+                  {accounts.map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
+                <select
+                  value={bybitAccountId ?? ''}
+                  onChange={(e) => setBybitAccountId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
+                  required
+                >
+                  <option value="">— Выберите аккаунт —</option>
+                  {bybitAccounts.map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name} ({a.api_key_hint}){a.testnet ? ' — testnet' : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>

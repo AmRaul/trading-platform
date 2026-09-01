@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.redis import init_redis, close_redis
-from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, admin
+from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +68,7 @@ app.include_router(positions.router, prefix="/api/positions", tags=["positions"]
 app.include_router(trades.router, prefix="/api/trades", tags=["trades"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(accounts.router, prefix="/api/accounts", tags=["accounts"])
+app.include_router(bybit_accounts.router, prefix="/api/bybit-accounts", tags=["bybit-accounts"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 

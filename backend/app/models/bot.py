@@ -8,7 +8,9 @@ class Bot(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    exchange = Column(String, default="cryptorg", nullable=False)  # cryptorg | bybit
     account_id = Column(Integer, ForeignKey("cryptorg_accounts.id"), nullable=True)
+    bybit_account_id = Column(Integer, ForeignKey("bybit_accounts.id"), nullable=True)
     name = Column(String, nullable=False)
     symbol = Column(String, nullable=False, index=True)  # e.g. BTCUSDT
     side = Column(String, nullable=False)  # LONG or SHORT

@@ -30,6 +30,7 @@ const NAV_GROUPS = [
     label: 'Setup',
     links: [
       { href: '/accounts', label: 'Accounts' },
+      { href: '/bybit-accounts', label: 'Bybit Accounts' },
       { href: '/backtester', label: 'Backtester' },
     ],
   },

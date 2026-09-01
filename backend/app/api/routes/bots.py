@@ -5,6 +5,7 @@ from typing import List
 from app.core.database import get_db
 from app.models import User, Bot, Position, Order, Trade
 from app.models.cryptorg_account import CryptorgAccount
+from app.models.bybit_account import BybitAccount
 from app.schemas.bot import BotCreate, BotUpdate, BotResponse, OpenPositionData
 from app.api.deps import get_current_user
 from app.services.cryptorg import cryptorg_client
@@ -90,7 +91,9 @@ async def get_bots(
             state=bot.state,
             is_active=bot.is_active,
             total_pnl=bot.total_pnl,
+            exchange=bot.exchange,
             account_id=bot.account_id,
+            bybit_account_id=bot.bybit_account_id,
             limit_entry_price=bot.limit_entry_price,
             created_at=bot.created_at,
             started_at=bot.started_at,
@@ -151,9 +154,24 @@ async def create_bot(
         if not acc_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Account not found")
 
+    if bot_data.bybit_account_id is not None:
+        bybit_acc_result = await db.execute(
+            select(BybitAccount).where(
+                BybitAccount.id == bot_data.bybit_account_id,
+                BybitAccount.user_id == current_user.id,
+            )
+        )
+        if not bybit_acc_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Bybit account not found")
+
+    if bot_data.exchange == "bybit" and bot_data.bybit_account_id is None:
+        raise HTTPException(status_code=400, detail="exchange=bybit requires bybit_account_id")
+
     bot = Bot(
         user_id=current_user.id,
+        exchange=bot_data.exchange,
         account_id=bot_data.account_id,
+        bybit_account_id=bot_data.bybit_account_id,
         name=bot_data.name,
         symbol=bot_data.symbol,
         side=bot_data.side,
@@ -214,6 +232,24 @@ async def update_bot(
             if not acc_result.scalar_one_or_none():
                 raise HTTPException(status_code=404, detail="Account not found")
         bot.account_id = bot_data.account_id
+
+    if 'bybit_account_id' in bot_data.model_fields_set:
+        if bot_data.bybit_account_id is not None:
+            bybit_acc_result = await db.execute(
+                select(BybitAccount).where(
+                    BybitAccount.id == bot_data.bybit_account_id,
+                    BybitAccount.user_id == current_user.id,
+                )
+            )
+            if not bybit_acc_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Bybit account not found")
+        bot.bybit_account_id = bot_data.bybit_account_id
+
+    if bot_data.exchange is not None:
+        bot.exchange = bot_data.exchange
+
+    if bot.exchange == "bybit" and bot.bybit_account_id is None:
+        raise HTTPException(status_code=400, detail="exchange=bybit requires bybit_account_id")
 
     await db.commit()
     await db.refresh(bot)
