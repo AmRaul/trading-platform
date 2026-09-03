@@ -252,7 +252,7 @@ export default function BotsPage() {
                   </>
                 ) : (
                   <button
-                    onClick={() => closeMutation.mutate(bot.id)}
+                    onClick={() => { if (confirm(`Закрыть позицию по ${bot.name}?`)) closeMutation.mutate(bot.id); }}
                     className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-xs"
                   >
                     <Square size={12} />
@@ -261,7 +261,7 @@ export default function BotsPage() {
                 )}
                 <button
                   onClick={() => setEditBot(bot)}
-                  className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                  className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded ml-1"
                   title={bot.state !== 'IDLE' ? 'Изменения применятся со следующей сделки' : 'Настройки'}
                 >
                   <Settings size={13} />
