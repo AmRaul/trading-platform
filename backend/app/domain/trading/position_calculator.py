@@ -164,7 +164,16 @@ class PositionCalculator:
         else:
             return ((average_price - current_price) / average_price) * 100
 
-    def calculate_sl_percent(self, order_count: int) -> float:
+    def calculate_sl_percent(self, order_count: int) -> Optional[float]:
+        """Returns None when no exchange-side stop should be sent at all —
+        callers must translate that into stop.enabled=False, never into
+        value="0". A percentage stop of 0 is not "no stop": on Cryptorg's
+        side it's a live stop at 0% offset, which the next tick (or even
+        just spread) can trigger immediately — indistinguishable on the
+        wire from the legitimate order_count==2 breakeven case, which is
+        also exactly 0% (stop at avg price). That collision silently
+        turned "SL disabled" into "stop immediately" for orders 1-2.
+        """
         sl_initial = self.config.get("sl_initial")
 
         # order_count 3+ always runs on sl_after_order3, independent of
@@ -174,7 +183,9 @@ class PositionCalculator:
             return -float(self.config.get("sl_after_order3", self.config.get("sl_breakeven_plus", 0.5)))
 
         if sl_initial is None:
-            return 0.0
+            if order_count == 2 and self.config.get("sl_breakeven_on_order2", True):
+                return 0.0
+            return None
         if order_count <= 1:
             return float(sl_initial)
         return 0.0 if self.config.get("sl_breakeven_on_order2", True) else float(sl_initial)
