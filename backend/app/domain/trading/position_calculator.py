@@ -75,7 +75,11 @@ class PositionCalculator:
         avg_price = self.calculate_average_price(orders)
 
         if order_count == 2 and self.config.get("sl_breakeven_on_order2", True):
-            dynamic_sl = avg_price
+            plus_pct = self.config.get("sl_breakeven_plus", 0.5) / 100
+            if side == "LONG":
+                dynamic_sl = avg_price * (1 + plus_pct)
+            else:
+                dynamic_sl = avg_price * (1 - plus_pct)
         elif order_count == 2:
             if sl_initial is None:
                 return 0.0, "disabled"
@@ -184,11 +188,19 @@ class PositionCalculator:
 
         if sl_initial is None:
             if order_count == 2 and self.config.get("sl_breakeven_on_order2", True):
-                return 0.0
+                # Negative, like sl_after_order3 below: update_stop_and_tp's
+                # sign convention is "positive = stop below entry", so
+                # breakeven-plus (stop above avg price on the profit side)
+                # has to cross zero, matching calculate_stop_loss's price math.
+                return -float(self.config.get("sl_breakeven_plus", 0.5))
             return None
         if order_count <= 1:
             return float(sl_initial)
-        return 0.0 if self.config.get("sl_breakeven_on_order2", True) else float(sl_initial)
+        return (
+            -float(self.config.get("sl_breakeven_plus", 0.5))
+            if self.config.get("sl_breakeven_on_order2", True)
+            else float(sl_initial)
+        )
 
     def add_order(self, order: OrderInfo):
         self.orders.append(order)
