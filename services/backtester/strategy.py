@@ -148,6 +148,26 @@ class TradingStrategy:
         self.pyramid_size_multiplier = self.pyramid_config.get('size_multiplier', 0.5)
         self.pyramid_stop_advance = self.pyramid_config.get('stop_advance', 'to_prev_entry')
 
+        # bot_replica — точная копия SL-логики живого бота (position_calculator.py
+        # calculate_stop_loss): order #1 sl_initial, order #2 breakeven+X%
+        # (или sl_initial снова если breakeven на 2-м ордере выключен),
+        # order #3+ sl_after_order3 offset от avg_price + опциональный trailing,
+        # пересчитывается на КАЖДОМ тике (не только при филле нового ордера)
+        self.pyramid_sl_initial = self.pyramid_config.get('sl_initial')
+        self.pyramid_sl_breakeven_on_order2 = self.pyramid_config.get('sl_breakeven_on_order2', True)
+        self.pyramid_sl_breakeven_plus = self.pyramid_config.get('sl_breakeven_plus', 0.5)
+        self.pyramid_sl_after_order3 = self.pyramid_config.get('sl_after_order3', 2.0)
+        self.pyramid_use_trailing = self.pyramid_config.get('use_trailing', False)
+        self.pyramid_trailing_percent = self.pyramid_config.get('trailing_percent', 1.5)
+
+        # Точная копия TP-логики живого бота (add_pyramiding_order.py):
+        # TP выставляется на бирже только когда позиция набрала max_orders —
+        # до этого момента TP не отправлен, только SL/breakeven/trailing
+        # защищают позицию. По умолчанию False — сохраняет старое поведение
+        # бэктестера (TP активен с 1-го ордера), чтобы не ломать существующие
+        # конфиги без явного включения.
+        self.pyramid_tp_only_on_last_order = self.pyramid_config.get('tp_only_on_last_order', False)
+
         # Параметры входа
         self.entry_config = config.get('entry_conditions', {})
         self.entry_type = self.entry_config.get('type', 'manual')
@@ -295,6 +315,16 @@ class TradingStrategy:
                 else:
                     return signal_data['short_signal']
 
+            elif self.indicator_strategy == 'donchian_breakout':
+                signal_data = self.indicator_strategy_handler.donchian_breakout_signal(
+                    historical_data, self.indicator_config
+                )
+
+                if self.order_type == OrderType.LONG:
+                    return signal_data['long_signal']
+                else:
+                    return signal_data['short_signal']
+
             elif self.indicator_strategy == 'mrc_trend_filtered':
                 if historical_trend_data is None:
                     if self.verbose:
@@ -302,6 +332,21 @@ class TradingStrategy:
                     return False
 
                 signal_data = self.indicator_strategy_handler.mrc_trend_filtered_signal(
+                    historical_data, self.indicator_config, historical_trend_data
+                )
+
+                if self.order_type == OrderType.LONG:
+                    return signal_data['long_signal']
+                else:
+                    return signal_data['short_signal']
+
+            elif self.indicator_strategy == 'rsi_trend_filtered':
+                if historical_trend_data is None:
+                    if self.verbose:
+                        print("rsi_trend_filtered требует historical_trend_data (trend_timeframe в конфиге)")
+                    return False
+
+                signal_data = self.indicator_strategy_handler.rsi_trend_filtered_signal(
                     historical_data, self.indicator_config, historical_trend_data
                 )
 
@@ -543,6 +588,79 @@ class TradingStrategy:
         else:  # 'fixed'
             return 1.0
 
+    def _calculate_bot_replica_sl(self, position: Position, current_price: float) -> Optional[float]:
+        """
+        Точная копия PositionCalculator.calculate_stop_loss из живого бота
+        (backend/app/domain/trading/position_calculator.py) — используется
+        когда pyramid.stop_advance == "bot_replica".
+
+        Слои защиты по количеству ИСПОЛНЕННЫХ ордеров в позиции:
+        - order #1: sl_initial% от цены входа (None → SL отключён на этом слое)
+        - order #2: breakeven+X% от avg_price (sl_breakeven_on_order2=True,
+          дефолт бота), либо повтор sl_initial если breakeven на 2-м отключён
+        - order #3+: sl_after_order3% offset от avg_price, независимо от
+          sl_initial (см. комментарий в боте — эти слои не должны гаситься
+          отключением начального SL)
+
+        На order_count >= 2 дополнительно накладывается trailing (если
+        use_trailing включён): SL = max(dynamic_sl, current_price*(1-trailing%))
+        для LONG — пересчитывается на КАЖДОМ тике, а не только при филле,
+        как и в боте (calculate_stop_loss вызывается из on_price_update).
+
+        Returns:
+            Цена SL, либо None если SL для текущего order_count отключён
+            (sl_initial отсутствует на order_count 1-2 без breakeven).
+        """
+        filled_orders = [o for o in position.orders if o.status == OrderStatus.FILLED]
+        if not filled_orders:
+            return None
+
+        order_count = len(filled_orders)
+        is_long = position.order_type == OrderType.LONG
+
+        if order_count == 1:
+            if self.pyramid_sl_initial is None:
+                return None
+            sl_pct = self.pyramid_sl_initial / 100
+            first_price = filled_orders[0].price
+            return first_price * (1 - sl_pct) if is_long else first_price * (1 + sl_pct)
+
+        avg_price = position.average_price
+
+        if order_count == 2 and self.pyramid_sl_breakeven_on_order2:
+            plus_pct = self.pyramid_sl_breakeven_plus / 100
+            dynamic_sl = avg_price * (1 + plus_pct) if is_long else avg_price * (1 - plus_pct)
+        elif order_count == 2:
+            if self.pyramid_sl_initial is None:
+                return None
+            sl_pct = self.pyramid_sl_initial / 100
+            first_price = filled_orders[0].price
+            return first_price * (1 - sl_pct) if is_long else first_price * (1 + sl_pct)
+        else:
+            offset = self.pyramid_sl_after_order3 / 100
+            dynamic_sl = avg_price * (1 - offset) if is_long else avg_price * (1 + offset)
+
+        if self.pyramid_use_trailing:
+            trailing_pct = self.pyramid_trailing_percent / 100
+            if is_long:
+                trailing_sl = current_price * (1 - trailing_pct)
+                return max(dynamic_sl, trailing_sl)
+            else:
+                trailing_sl = current_price * (1 + trailing_pct)
+                if trailing_sl <= current_price:
+                    return dynamic_sl
+                return min(dynamic_sl, trailing_sl)
+
+        return dynamic_sl
+
+    def _update_bot_replica_sl(self, position: Position, current_price: float) -> None:
+        """Пересчитывает position.pyramid_stop_price на каждом тике для
+        stop_advance == "bot_replica" — trailing-слой (order #3+) в боте
+        обновляется из on_price_update на каждый апдейт цены, не только
+        при филле нового пирамид-ордера."""
+        if self.pyramid_enabled and self.pyramid_stop_advance == 'bot_replica':
+            position.pyramid_stop_price = self._calculate_bot_replica_sl(position, current_price)
+
     def calculate_margin_ratio(self, position: Position, current_price: float) -> float:
         """
         Рассчитывает коэффициент маржи
@@ -675,6 +793,19 @@ class TradingStrategy:
         Returns:
             Размер ордера (в монетах)
         """
+        # peak_balance раньше обновлялся только внутри should_close_position,
+        # которая вызывается лишь пока есть открытая позиция — после закрытия
+        # прибыльной сделки, поднявшей баланс выше исторического пика, но до
+        # следующего входа, self.balance рос, а peak_balance оставался
+        # старым. Из-за этого текущая просадка считалась от устаревшего,
+        # заниженного пика и один раз превышенный лимит блокировал НОВЫЕ
+        # входы навсегда, даже когда баланс уже восстановился выше пика.
+        # Обновляем здесь тоже — это единственная точка, читающая peak_balance
+        # для решения "можно ли открыть/добавить ордер", независимо от того,
+        # есть ли сейчас открытая позиция.
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+
         # Проверяем максимальную просадку
         current_drawdown = (self.peak_balance - self.balance) / self.peak_balance
         if current_drawdown >= self.max_drawdown_percent:
@@ -782,6 +913,17 @@ class TradingStrategy:
         Returns:
             True если ордер успешно исполнен
         """
+        # calculate_order_quantity возвращает 0 когда max_drawdown_percent
+        # превышен — без этой проверки execute_order всё равно "исполнял" бы
+        # нулевой ордер, открывая позицию с quantity=0 (avg_price есть,
+        # объём нулевой), которая потом висит до конца бэктеста: TP/SL
+        # продолжают её "закрывать" и заново "открывать" с нулевым PnL,
+        # а calculate_liquidation_price делит на quantity=0.
+        if order.quantity <= 0:
+            if self.verbose:
+                print(f"[ORDER REJECTED] Нулевой размер ордера (probably max_drawdown_percent превышен)")
+            return False
+
         # Полная стоимость позиции
         order_value = order.price * order.quantity
 
@@ -818,6 +960,11 @@ class TradingStrategy:
                 orders=[order]
             )
             self.positions.append(position)
+
+            # bot_replica: SL слоя order #1 (sl_initial) выставляется сразу
+            # на входе, даже без единого pyramid-добавления
+            if self.pyramid_enabled and self.pyramid_stop_advance == 'bot_replica':
+                position.pyramid_stop_price = self._calculate_bot_replica_sl(position, order.price)
         else:
             # Добавляем к существующей позиции
             position = self.get_open_position()
@@ -832,8 +979,53 @@ class TradingStrategy:
             position.orders.append(order)
             position.quantity += order.quantity
 
+            # bot_replica: пересчитываем SL сразу после филла на новый order_count
+            # (полный пересчёт на каждом тике происходит отдельно в process_tick)
+            if order.is_pyramid and self.pyramid_stop_advance == 'bot_replica':
+                position.pyramid_stop_price = self._calculate_bot_replica_sl(position, order.price)
+
         return True
     
+    def _is_tp_active(self, position: Position) -> bool:
+        """
+        Определяет, активен ли TP для текущего состояния позиции.
+
+        При pyramid.tp_only_on_last_order=True (копия живого бота —
+        add_pyramiding_order.py: tp_pct задаётся только при
+        order_number >= max_orders) TP выключен, пока пирамидинг не
+        набрал полное количество ордеров — до этого момента позицию
+        защищают только SL/breakeven/trailing.
+
+        Исключение: если max_drawdown_percent (риск-лимит всего счёта)
+        уже превышен, calculate_order_quantity навсегда возвращает 0 для
+        новых ордеров (см. эту проверку выше в файле) — пирамидинг физически
+        не может добраться до max_orders, и без этого исключения TP остался
+        бы заблокирован до конца бэктеста, даже если позиция ушла в большой
+        плюс. Наблюдалось на реальном прогоне: позиция выросла в цене на
+        500%+ и провисела открытой 2.5 года, потому что pyramid не мог
+        добавиться (просадка счёта была выше лимита), а TP ждал добавления,
+        которое никогда не случится. У живого бота этой ловушки нет — там
+        max_orders ограничивает только конкретную позицию, а не общий
+        риск-лимит счёта, отдельно блокирующий именно новые ордера.
+        """
+        if not (self.pyramid_enabled and self.pyramid_tp_only_on_last_order):
+            return True
+        # max_pyramid_orders считает ДОБАВЛЕНИЯ (см. should_add_pyramid_order,
+        # где сравнивается с pyramid_orders_count, не включающим вход) — тот же
+        # счётчик нужен и здесь, иначе TP активировался бы на 1 добавление
+        # раньше, чем пирамидинг реально исчерпан (несовместимая семантика
+        # с should_add_pyramid_order привела бы к TP до последнего ордера)
+        pyramid_orders_count = sum(1 for o in position.orders if o.is_pyramid and o.status == OrderStatus.FILLED)
+        if pyramid_orders_count >= self.max_pyramid_orders:
+            return True
+        # Обновляем peak_balance здесь тоже (см. комментарий в
+        # calculate_order_quantity) — не полагаемся на порядок вызовов между
+        # функциями, чтобы drawdown всегда считался от актуального пика
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+        current_drawdown = (self.peak_balance - self.balance) / self.peak_balance if self.peak_balance > 0 else 0
+        return current_drawdown >= self.max_drawdown_percent
+
     def check_intrabar_exit(self, current_data: pd.Series, position: Position) -> Tuple[bool, str, float]:
         """
         Проверяет достижение TP/SL внутри свечи используя high/low
@@ -869,7 +1061,7 @@ class TradingStrategy:
             tp_price = None
             sl_price = None
 
-            if self.tp_enabled:
+            if self.tp_enabled and self._is_tp_active(position):
                 tp_price = avg_price * (1 + self.take_profit_percent)
             if self.sl_enabled:
                 sl_price = position.pyramid_stop_price if position.pyramid_stop_price is not None \
@@ -897,7 +1089,7 @@ class TradingStrategy:
             tp_price = None
             sl_price = None
 
-            if self.tp_enabled:
+            if self.tp_enabled and self._is_tp_active(position):
                 tp_price = avg_price * (1 - self.take_profit_percent)
             if self.sl_enabled:
                 sl_price = position.pyramid_stop_price if position.pyramid_stop_price is not None \
@@ -964,7 +1156,7 @@ class TradingStrategy:
             loss_percent = (avg_price - current_price) / avg_price
             
             # Проверяем trailing take profit
-            if self.tp_enabled and self.tp_trailing.get('enabled', False):
+            if self.tp_enabled and self._is_tp_active(position) and self.tp_trailing.get('enabled', False):
                 tp_activation = self.tp_trailing.get('activation_percent', 3) / 100
                 tp_trail = self.tp_trailing.get('trail_percent', 1) / 100
                 
@@ -999,7 +1191,7 @@ class TradingStrategy:
             if self.verbose:
                 print(f"🔍 TP/SL ПРОВЕРКА (LONG): Прибыль {profit_percent*100:.2f}% | Убыток {loss_percent*100:.2f}% | TP: {self.take_profit_percent*100:.1f}% | SL: {self.stop_loss_percent*100:.1f}%")
             
-            if self.tp_enabled and profit_percent >= self.take_profit_percent:
+            if self.tp_enabled and self._is_tp_active(position) and profit_percent >= self.take_profit_percent:
                 if self.verbose:
                     print(f"✅ TAKE PROFIT (LONG): {profit_percent*100:.2f}% >= {self.take_profit_percent*100:.1f}%")
                 return True, "take_profit"
@@ -1019,7 +1211,7 @@ class TradingStrategy:
             loss_percent = (current_price - avg_price) / avg_price
             
             # Проверяем trailing take profit для шорта
-            if self.tp_enabled and self.tp_trailing.get('enabled', False):
+            if self.tp_enabled and self._is_tp_active(position) and self.tp_trailing.get('enabled', False):
                 tp_activation = self.tp_trailing.get('activation_percent', 3) / 100
                 tp_trail = self.tp_trailing.get('trail_percent', 1) / 100
                 
@@ -1054,7 +1246,7 @@ class TradingStrategy:
             if self.verbose:
                 print(f"🔍 TP/SL ПРОВЕРКА (SHORT): Прибыль {profit_percent*100:.2f}% | Убыток {loss_percent*100:.2f}% | TP: {self.take_profit_percent*100:.1f}% | SL: {self.stop_loss_percent*100:.1f}%")
             
-            if self.tp_enabled and profit_percent >= self.take_profit_percent:
+            if self.tp_enabled and self._is_tp_active(position) and profit_percent >= self.take_profit_percent:
                 if self.verbose:
                     print(f"✅ TAKE PROFIT (SHORT): {profit_percent*100:.2f}% >= {self.take_profit_percent*100:.1f}%")
                 return True, "take_profit"
@@ -1181,6 +1373,7 @@ class TradingStrategy:
         if self.has_open_position():
             position = self.get_open_position()
             position.update_unrealized_pnl(current_price)
+            self._update_bot_replica_sl(position, current_price)
 
         # Проверяем условия входа
         if self.should_enter_position(current_data, historical_data, historical_trend_data):
@@ -1309,6 +1502,7 @@ class TradingStrategy:
         if self.has_open_position():
             position = self.get_open_position()
             position.update_unrealized_pnl(current_price)
+            self._update_bot_replica_sl(position, current_price)
 
         # ✅ ПРАВИЛЬНО: Определяем новую strategy свечу (как в Bar Magnifier)
         is_new_strategy_bar = (

@@ -137,6 +137,7 @@ data/*
 !data/.gitkeep
 db/*
 !db/.gitkeep
+backtests/
 reports/*
 !reports/.gitkeep
 *.log

@@ -892,6 +892,196 @@ class IndicatorStrategy:
             }
         }
 
+    def rsi_trend_filtered_signal(self, data: pd.DataFrame, config: dict, trend_data: pd.DataFrame) -> dict:
+        """
+        Стратегия: RSI перекупленность/перепроданность на своём ТФ (напр. 1H),
+        отфильтрованная трендом на старшем ТФ (EMA на trend_data, напр. 4H).
+
+        Гипотеза: входим в LONG только когда цена НАД EMA на трендовом ТФ
+        (структурный uptrend) И RSI на торговом ТФ ушёл в перепроданность —
+        покупка отката внутри восходящего тренда, а не попытка поймать разворот.
+        Зеркально для SHORT: цена ПОД EMA + RSI overbought.
+
+        Построена по образцу mrc_trend_filtered_signal — тот же паттерн
+        "сигнал на своём ТФ + фильтр тренда на trend_data с другого ТФ".
+
+        Args:
+            data: DataFrame OHLCV торгового (RSI) таймфрейма, напр. 1H
+            config: конфигурация — rsi_period, rsi_oversold, rsi_overbought,
+                    trend_ema_period (EMA период на trend_data)
+            trend_data: DataFrame OHLCV трендового таймфрейма, напр. 4H —
+                    ПОСЛЕДНЯЯ строка должна быть последней ЗАКРЫТОЙ свечой
+                    (защиту от look-ahead bias обеспечивает вызывающий код —
+                    backtester.py находит parent-свечу через get_parent_candle_index)
+
+        Returns:
+            dict с сигналами и значениями индикаторов (RSI + trend EMA)
+        """
+        rsi_period = config.get('rsi_period', 14)
+        rsi_oversold = config.get('rsi_oversold', 30)
+        rsi_overbought = config.get('rsi_overbought', 70)
+        trend_ema_period = config.get('trend_ema_period', 200)
+
+        safe_return = {
+            'long_signal': False,
+            'short_signal': False,
+            'rsi': 0,
+            'trend_up': False,
+            'trend_down': False,
+            'indicators': {
+                'rsi': 0, 'trend_ema': 0, 'trend_price': 0,
+            }
+        }
+
+        if len(data) == 0 or len(data) < rsi_period + 1:
+            return safe_return
+        if trend_data is None or len(trend_data) < trend_ema_period:
+            return safe_return
+
+        trend_ema = self.indicators.calculate_ema(trend_data['close'], trend_ema_period, cache_key=None)
+        if len(trend_ema) == 0 or pd.isna(trend_ema.iloc[-1]):
+            return safe_return
+
+        trend_ema_current = trend_ema.iloc[-1]
+        trend_price_current = trend_data['close'].iloc[-1]
+        trend_up = trend_price_current > trend_ema_current
+        trend_down = trend_price_current < trend_ema_current
+
+        rsi = self.indicators.calculate_rsi(data['close'], rsi_period, cache_key=None)
+        if len(rsi) == 0 or pd.isna(rsi.iloc[-1]):
+            return safe_return
+
+        rsi_current = rsi.iloc[-1]
+
+        # LONG: тренд вверх (старший ТФ) + RSI oversold (торговый ТФ)
+        long_signal = trend_up and (rsi_current < rsi_oversold)
+        # SHORT: тренд вниз (старший ТФ) + RSI overbought (торговый ТФ)
+        short_signal = trend_down and (rsi_current > rsi_overbought)
+
+        return {
+            'long_signal': long_signal,
+            'short_signal': short_signal,
+            'rsi': rsi_current,
+            'trend_up': trend_up,
+            'trend_down': trend_down,
+            'indicators': {
+                'rsi': rsi_current,
+                'trend_ema': trend_ema_current,
+                'trend_price': trend_price_current,
+            }
+        }
+
+    def donchian_breakout_signal(self, data: pd.DataFrame, config: dict) -> dict:
+        """
+        Стратегия: пробитие канала (Donchian breakout) для пирамидинга ПО тренду.
+
+        В отличие от mean-reversion входов (mrc_reversion/rsi_trend_filtered),
+        которые ищут точку РАЗВОРОТА (цена ушла от среднего — жди возврата),
+        этот сигнал ищет точку ПРОДОЛЖЕНИЯ: цена пробивает недавний
+        максимум/минимум — движение только начинается, а не истощается.
+
+        Это принципиально важно для честного пирамидинга (TP только на
+        последнем ордере — см. pyramid.tp_only_on_last_order в strategy.py):
+        разворотный вход статистически даёт много "ложных стартов" (цена
+        коснулась экстремума и продолжила против входа), из-за которых
+        сделка без раннего TP сразу уходит в SL, не успев набрать ни одного
+        pyramid-ордера. Breakout-вход, наоборот, выбирает моменты, где
+        движение уже показало намерение продолжаться — именно то окно,
+        где у пирамидинга есть шанс собрать 2-3 ордера, прежде чем развернуться.
+
+        Три условия, все обязательны (AND):
+        1. ADX(adx_period) >= adx_threshold — тренд достаточно силён, чтобы
+           пирамидинг имел смысл (при слабом тренде/флете вход блокируется
+           независимо от пробития канала)
+        2. close пробивает Donchian-канал: close > channel_high(lookback)
+           за N баров ДО текущего (лонг) или close < channel_low (шорт) —
+           именно пробитие, а не "уже внутри диапазона выше канала"
+        3. volume > avg_volume(volume_period) * volume_multiplier —
+           отсекает пробои на тонком объёме (частая причина ложных пробоев)
+
+        Args:
+            data: DataFrame OHLCV
+            config: donchian_period (default 20), adx_period (14),
+                    adx_threshold (25), volume_period (20),
+                    volume_multiplier (1.2)
+
+        Returns:
+            dict с сигналами и значениями индикаторов
+        """
+        donchian_period = config.get('donchian_period', 20)
+        adx_period = config.get('adx_period', 14)
+        adx_threshold = config.get('adx_threshold', 25)
+        volume_period = config.get('volume_period', 20)
+        volume_multiplier = config.get('volume_multiplier', 1.2)
+
+        min_len = max(donchian_period, adx_period, volume_period) + 2
+        safe_return = {
+            'long_signal': False,
+            'short_signal': False,
+            'indicators': {
+                'adx': 0, 'channel_high': 0, 'channel_low': 0,
+                'volume_ratio': 0,
+            }
+        }
+
+        if len(data) < min_len:
+            return safe_return
+
+        # backtester.py передаёт РАСТУЩИЙ срез (data.iloc[:i+1] — вся история
+        # с начала бэктеста), а не скользящее окно. calculate_adx пересчитывает
+        # ADX с нуля на каждый вызов (cache_key=None здесь — как и во всех
+        # остальных *_signal функциях этого файла, кэш ломал бы честность
+        # бэктеста на растущих данных) — без обрезки это O(n) индикатор,
+        # вызываемый на каждом из n тиков над всё бОльшим n, т.е. O(n²)
+        # суммарно за прогон. На 26k+ баров это превращает секунды в часы.
+        # Обрезаем до достаточного для ADX/rolling окна (с запасом на ADX
+        # warmup — ADXIndicator использует double-smoothing, разгон дольше
+        # одного period) — ADX на последнем баре не зависит от более старых
+        # данных, поэтому результат идентичен расчёту на полной истории.
+        window = max(adx_period * 4, donchian_period, volume_period) + 2
+        recent_data = data.tail(window) if len(data) > window else data
+
+        # Канал считается по барам ДО текущего (shift(1)) — иначе текущий
+        # экстремум сам себя включал бы в свой же порог пробития, и пробитие
+        # было бы недостижимо по определению (look-ahead в другую сторону)
+        channel_high = recent_data['high'].rolling(donchian_period).max().shift(1)
+        channel_low = recent_data['low'].rolling(donchian_period).min().shift(1)
+
+        adx = self.indicators.calculate_adx(recent_data['high'], recent_data['low'], recent_data['close'], adx_period, cache_key=None)
+
+        avg_volume = recent_data['volume'].rolling(volume_period).mean()
+
+        if len(adx) == 0 or pd.isna(adx.iloc[-1]):
+            return safe_return
+        if pd.isna(channel_high.iloc[-1]) or pd.isna(channel_low.iloc[-1]):
+            return safe_return
+        if pd.isna(avg_volume.iloc[-1]) or avg_volume.iloc[-1] <= 0:
+            return safe_return
+
+        current_close = recent_data['close'].iloc[-1]
+        current_volume = recent_data['volume'].iloc[-1]
+        adx_current = adx.iloc[-1]
+        channel_high_current = channel_high.iloc[-1]
+        channel_low_current = channel_low.iloc[-1]
+        volume_ratio = current_volume / avg_volume.iloc[-1]
+
+        trend_strong = adx_current >= adx_threshold
+        volume_confirmed = volume_ratio >= volume_multiplier
+
+        long_signal = trend_strong and volume_confirmed and current_close > channel_high_current
+        short_signal = trend_strong and volume_confirmed and current_close < channel_low_current
+
+        return {
+            'long_signal': long_signal,
+            'short_signal': short_signal,
+            'indicators': {
+                'adx': adx_current,
+                'channel_high': channel_high_current,
+                'channel_low': channel_low_current,
+                'volume_ratio': volume_ratio,
+            }
+        }
+
     def custom_signal(self, data: pd.DataFrame, config: dict) -> dict:
         """
         Кастомная стратегия с возможностью выбора любой комбинации индикаторов
