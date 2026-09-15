@@ -162,10 +162,12 @@ class CryptorgClient:
         self,
         symbol: str,
         side: str,
-        sl_percent: float,
+        sl_percent: Optional[float],
         tp_percent: Optional[float] = None,
     ) -> Optional[Dict]:
-        """Update SL and optionally TP after averaging. tp_percent=None leaves TP disabled."""
+        """Update SL and optionally TP after averaging. tp_percent=None leaves TP
+        disabled. sl_percent must be a plain positive percent (or None) — direction
+        comes from `strategy`/side, Cryptorg has no sign convention for this field."""
         params: Dict = {
             "strategy": side.lower(),
             "pairs": [symbol],

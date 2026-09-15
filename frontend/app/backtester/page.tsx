@@ -238,7 +238,7 @@ function ResultsView({ results, taskId }: { results: BacktestResults; taskId: st
 // см. services/backtester/strategy.py / indicators.py).
 // ---------------------------------------------------------------------------
 
-type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion' | 'mrc_trend_filtered' | 'custom';
+type IndicatorStrategy = 'none' | 'trend_momentum' | 'volatility_bounce' | 'momentum_trend' | 'mrc_reversion' | 'mrc_trend_filtered' | 'rsi_trend_filtered' | 'custom';
 
 const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   none: 'Без индикатора (только DCA-сетка)',
@@ -247,6 +247,7 @@ const INDICATOR_LABELS: Record<IndicatorStrategy, string> = {
   momentum_trend: 'Momentum + Trend (SuperTrend + Stoch RSI)',
   mrc_reversion: 'MRC Reversion (Mean Reversion Channel)',
   mrc_trend_filtered: 'MRC + тренд-фильтр (4H EMA + 1H/15m MRC)',
+  rsi_trend_filtered: 'RSI + тренд-фильтр (EMA на отдельном ТФ)',
   custom: 'Свой набор — выбрать индикаторы вручную',
 };
 
@@ -310,6 +311,13 @@ interface FormState {
   trend_timeframe: string;
   mtf_entry_band: '1' | '2' | '1_2';
   mtf_trend_ema_period: number;
+  // rsi_trend_filtered — RSI вход на основном ТФ + EMA тренд-фильтр
+  // на отдельном, более старшем таймфрейме
+  rsi_trend_timeframe: string;
+  rsi_tf_period: number;
+  rsi_tf_oversold: number;
+  rsi_tf_overbought: number;
+  rsi_tf_trend_ema_period: number;
   // custom — свой набор индикаторов
   custom_selected: Record<CustomIndicatorKey, boolean>;
   custom_ema_mode: 'cross' | 'price_vs_ema';
@@ -398,6 +406,11 @@ const DEFAULT_FORM: FormState = {
   mtf_entry_band: '1_2',
   mtf_trend_ema_period: 21,
   mrc_source: 'hlc3',
+  rsi_trend_timeframe: '4h',
+  rsi_tf_period: 14,
+  rsi_tf_oversold: 30,
+  rsi_tf_overbought: 70,
+  rsi_tf_trend_ema_period: 200,
   custom_selected: { ema: true, rsi: true, bollinger_bands: false, atr: false, supertrend: false, stochastic_rsi: false, adx: false },
   custom_ema_mode: 'cross',
   custom_ema_short: 50,
@@ -523,6 +536,20 @@ function buildConfig(f: FormState): object {
         entry_band: f.mtf_entry_band === '1_2' ? [1, 2] : parseInt(f.mtf_entry_band, 10),
         source: f.mrc_source,
         trend_ema_period: f.mtf_trend_ema_period,
+      },
+    };
+  } else if (f.indicator === 'rsi_trend_filtered') {
+    // Третий, независимый таймфрейм (реальные биржевые свечи, не ресемплинг —
+    // см. backtester.py/data_loader.py) для тренд-фильтра поверх RSI-входа.
+    config.trend_timeframe = f.rsi_trend_timeframe;
+    config.indicators = {
+      enabled: true,
+      strategy_type: 'rsi_trend_filtered',
+      rsi_trend_filtered: {
+        rsi_period: f.rsi_tf_period,
+        rsi_oversold: f.rsi_tf_oversold,
+        rsi_overbought: f.rsi_tf_overbought,
+        trend_ema_period: f.rsi_tf_trend_ema_period,
       },
     };
   } else if (f.indicator === 'custom') {
@@ -725,6 +752,33 @@ function IndicatorFields({ form, setForm }: { form: FormState; setForm: (updater
               <option value="ohlc4">ohlc4</option>
             </select>
           </Field>
+        </div>
+      </div>
+    );
+  }
+
+  if (form.indicator === 'rsi_trend_filtered') {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-gray-500">
+          Вход только когда тренд на старшем ТФ совпадает с направлением: цена выше EMA (тренд-ТФ) + RSI на
+          основном ТФ ({form.timeframe}) ушёл в перепроданность/перекупленность. Тренд-ТФ грузится реальными
+          биржевыми свечами (не ресемплинг), как в live-боте.
+        </p>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Тренд-таймфрейм">
+            <select value={form.rsi_trend_timeframe} onChange={e => setForm(f => ({ ...f, rsi_trend_timeframe: e.target.value }))} className={inputCls}>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </Field>
+          <NumberField label="Тренд EMA период" value={form.rsi_tf_trend_ema_period} onChange={set('rsi_tf_trend_ema_period')} />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <NumberField label="RSI период" value={form.rsi_tf_period} onChange={set('rsi_tf_period')} />
+          <NumberField label="RSI oversold" value={form.rsi_tf_oversold} onChange={set('rsi_tf_oversold')} />
+          <NumberField label="RSI overbought" value={form.rsi_tf_overbought} onChange={set('rsi_tf_overbought')} />
         </div>
       </div>
     );
