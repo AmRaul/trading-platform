@@ -114,6 +114,12 @@ class DataLoader:
             exchange_instance = exchange_class({
                 'rateLimit': 1200,  # Ограничение запросов
                 'enableRateLimit': True,
+                # Без явного timeout сетевой запрос может зависнуть на уровне
+                # сокета дольше, чем gunicorn --timeout ждёт ответа от worker'а
+                # (см. incident: WORKER TIMEOUT + SIGKILL на 15m/3yr прогоне —
+                # fetch_ohlcv ни разу не бросил исключение за 5+ минут, значит
+                # завис ниже уровня, который ccxt.BaseError мог бы поймать)
+                'timeout': 15000,
             })
             
             print(f"Подключение к бирже: {exchange_instance.name}")
@@ -175,7 +181,13 @@ class DataLoader:
             current_since = since
             
             print(f"Загрузка данных {symbol} {timeframe} с {exchange}...")
-            
+
+            consecutive_errors = 0
+            max_consecutive_errors = 10  # см. комментарий у timeout: без лимита
+            # ретраев одна упрямо повторяющаяся сетевая проблема держит gunicorn
+            # worker живым, но бесполезным, пока не сработает его собственный
+            # --timeout и SIGKILL — лучше сдаться раньше с понятной ошибкой
+
             while True:
                 try:
                     # Делаем запрос к бирже
@@ -185,36 +197,42 @@ class DataLoader:
                         since=current_since,
                         limit=limit
                     )
-                    
+                    consecutive_errors = 0
+
                     if not ohlcv:
                         break
-                    
+
                     # Фильтруем по конечной дате если указана
                     if until:
                         ohlcv = [candle for candle in ohlcv if candle[0] <= until]
-                    
+
                     all_ohlcv.extend(ohlcv)
-                    
+
                     # Проверяем, достигли ли конечной даты
                     if until and ohlcv and ohlcv[-1][0] >= until:
                         break
-                    
+
                     # Обновляем timestamp для следующего запроса
                     if ohlcv:
                         current_since = ohlcv[-1][0] + 1
                     else:
                         break
-                    
+
                     # Показываем прогресс
                     if len(all_ohlcv) % 5000 == 0:
                         last_date = datetime.fromtimestamp(ohlcv[-1][0] / 1000)
                         print(f"Загружено {len(all_ohlcv)} свечей, последняя дата: {last_date}")
-                    
+
                     # Пауза между запросами для соблюдения лимитов
                     time.sleep(exchange_instance.rateLimit / 1000)
-                    
-                except ccxt.BaseError as e:
-                    print(f"Ошибка при загрузке данных: {e}")
+
+                except (ccxt.BaseError, requests.exceptions.RequestException) as e:
+                    consecutive_errors += 1
+                    print(f"Ошибка при загрузке данных ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    if consecutive_errors >= max_consecutive_errors:
+                        raise Exception(
+                            f"Загрузка прервана после {max_consecutive_errors} подряд сетевых ошибок: {e}"
+                        )
                     time.sleep(5)  # Пауза при ошибке
                     continue
             
