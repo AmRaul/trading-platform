@@ -24,20 +24,24 @@ class ClosePositionUseCase:
         exit_price: float,
         exit_reason: str,
         db: AsyncSession,
+        send_to_exchange: bool = True,
     ) -> Dict:
+        """send_to_exchange=False — позиция уже закрыта на бирже (сверка),
+        фиксируем сделку только у себя."""
         logger.info(
             f"[CLOSE] bot={bot.id} symbol={bot.symbol} side={bot.side} "
             f"reason={exit_reason} exit={exit_price} avg={position.average_price} "
             f"size={position.total_size:.2f} sl={position.current_sl}"
         )
 
-        close_result = await self.executor.close_position(
-            symbol=bot.symbol,
-            side=bot.side,
-            quantity=position.total_size,
-        )
-        if not close_result or not close_result.get("success"):
-            logger.error("Failed to close position on exchange — closing locally anyway")
+        if send_to_exchange:
+            close_result = await self.executor.close_position(
+                symbol=bot.symbol,
+                side=bot.side,
+                quantity=position.total_size,
+            )
+            if not close_result or not close_result.get("success"):
+                logger.error("Failed to close position on exchange — closing locally anyway")
 
         pnl = calculator.calculate_unrealized_pnl(
             bot.side, position.average_price, exit_price, position.total_size
@@ -66,7 +70,9 @@ class ClosePositionUseCase:
         position.closed_at = datetime.utcnow()
         position.realized_pnl = pnl
 
-        bot.state = "IDLE"
+        # Цикл с входом по сигналу — не переоткрываемся сразу, а снова ждём сигнал
+        signal_cycle = bot.config.get("cycle", False) and bot.config.get("entry_signal")
+        bot.state = "SIGNAL" if signal_cycle else "IDLE"
         bot.total_pnl += pnl
         bot.stopped_at = datetime.utcnow()
 
@@ -81,7 +87,7 @@ class ClosePositionUseCase:
         logger.info(f"Position closed: {exit_reason}, PnL: {pnl:.2f} ({pnl_percent:.2f}%)")
 
         # Auto-cycle: reopen position immediately after close if enabled
-        if bot.config.get("cycle", False):
+        if bot.config.get("cycle", False) and not signal_cycle:
             import asyncio
             from app.services.websocket import price_stream_manager
             async def _reopen():

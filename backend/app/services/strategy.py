@@ -23,9 +23,14 @@ import time
 logger = logging.getLogger(__name__)
 
 
+# Как часто сверять открытую позицию с биржей (get_open_position_size)
+RECONCILE_INTERVAL_SEC = 60
+
+
 class BotState(str, Enum):
     IDLE = "IDLE"
     WAITING = "WAITING"
+    SIGNAL = "SIGNAL"  # ждёт сигнал входа (config.entry_signal), проверяет SignalEntryScheduler
     ENTRY = "ENTRY"
     PYRAMIDING = "PYRAMIDING"
     EXIT = "EXIT"
@@ -45,6 +50,8 @@ class StrategyEngine:
         self._is_closing = False
         self._is_entering = False
         self._last_tick_log = 0.0
+        self._executor = None
+        self._last_reconcile = time.time()
 
         self._market = BybitMarketDataAdapter()
         self._publisher = WebSocketPublisherAdapter()
@@ -84,6 +91,7 @@ class StrategyEngine:
 
             executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
 
+        self._executor = executor
         self._open_uc = OpenPositionUseCase(executor, self._market, self._publisher)
         self._close_uc = ClosePositionUseCase(executor, self._publisher)
         self._add_order_uc = AddPyramidingOrderUseCase(executor, self._market, self._publisher)
@@ -149,20 +157,50 @@ class StrategyEngine:
             logger.error(f"Error in set_limit_entry: {e}")
             return {"success": False, "error": str(e)}
 
-    async def cancel_limit_entry(self) -> Dict:
-        if self.current_state != BotState.WAITING:
-            return {"success": False, "error": "Bot not in WAITING state"}
+    async def arm_signal_entry(self) -> Dict:
+        if self.current_state != BotState.IDLE:
+            return {"success": False, "error": "Bot not in IDLE state"}
+        if not self.bot.config.get("entry_signal"):
+            return {"success": False, "error": "Bot has no entry_signal in config"}
         try:
+            self.bot.state = BotState.SIGNAL
+            await self.db.commit()
+            await self.db.refresh(self.bot)
+            self.current_state = BotState.SIGNAL
+            logger.info(f"[SIGNAL_WAIT] bot={self.bot_id} {self.bot.symbol} {self.bot.side} — waiting for entry signal")
+            return {"success": True}
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error in arm_signal_entry: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def signal_entry(self) -> Dict:
+        """Вход по сработавшему сигналу — вызывается SignalEntryScheduler."""
+        if self.current_state != BotState.SIGNAL:
+            return {"success": False, "error": "Bot not in SIGNAL state"}
+        self.current_state = BotState.IDLE  # manual_entry принимает только IDLE
+        result = await self.manual_entry()
+        if not result["success"]:
+            self.current_state = BotState.SIGNAL
+        return result
+
+    async def cancel_limit_entry(self) -> Dict:
+        """Отменяет ожидание входа — и лимитного (WAITING), и по сигналу (SIGNAL)."""
+        if self.current_state not in (BotState.WAITING, BotState.SIGNAL):
+            return {"success": False, "error": "Bot not in WAITING or SIGNAL state"}
+        try:
+            was_waiting = self.current_state == BotState.WAITING
             self.bot.limit_entry_price = None
             self.bot.state = BotState.IDLE
             await self.db.commit()
             await self.db.refresh(self.bot)
             self.current_state = BotState.IDLE
 
-            from app.services.websocket import price_stream_manager
-            price_stream_manager.unregister_strategy(self.bot_id)
+            if was_waiting:
+                from app.services.websocket import price_stream_manager
+                price_stream_manager.unregister_strategy(self.bot_id)
 
-            logger.info(f"[CANCEL_LIMIT] bot={self.bot_id} limit entry cancelled")
+            logger.info(f"[CANCEL_ENTRY] bot={self.bot_id} pending entry cancelled")
             return {"success": True}
         except Exception as e:
             await self.db.rollback()
@@ -260,25 +298,61 @@ class StrategyEngine:
                 await self._close_position(current_price, exit_reason)
                 return
 
-            # 2. Check add-order trigger
-            # DCA bots: Cryptorg handles limit orders natively — no manual averaging needed
-            bot_type = self.bot.config.get("bot_type", "pyramiding")
-            if bot_type == "pyramiding":
-                if self.calculator.should_add_order(self.bot.side, current_price, last_order_price):
-                    if self._is_adding_order:
-                        return
-                    logger.info(
-                        f"[AVG TRIGGER] bot={self.bot_id} current={current_price} "
-                        f"last_order={last_order_price} orders={orders_count}"
-                    )
-                    await self._add_pyramiding_order(current_price)
-                    return
+            # 2. Check TP hit — ловим по цене сами, одинаково для любой биржи:
+            # даже если биржевой тейк уже закрыл позицию, у нас сделка тоже закроется
+            if self.calculator.is_take_profit_hit(self.bot.side, current_price):
+                logger.info(
+                    f"[TP_HIT] bot={self.bot_id} symbol={self.bot.symbol} current={current_price} "
+                    f"tp={self.calculator.take_profit_price(self.bot.side)}"
+                )
+                await self._close_position(current_price, "TP_HIT")
+                return
 
-            # 3. Update trailing SL + PnL
+            # 3. Check add-order trigger: добор пирамидинга или страховочный DCA
+            if self.calculator.is_dca():
+                add_order = self.calculator.should_add_dca_order(self.bot.side, current_price)
+            else:
+                add_order = self.calculator.should_add_order(self.bot.side, current_price, last_order_price)
+            if add_order:
+                if self._is_adding_order:
+                    return
+                logger.info(
+                    f"[AVG TRIGGER] bot={self.bot_id} current={current_price} "
+                    f"last_order={last_order_price} orders={orders_count}"
+                )
+                await self._add_pyramiding_order(current_price)
+                return
+
+            # 4. Позиция могла закрыться на бирже без нас (руками, ликвидация)
+            if await self._reconcile_with_exchange(current_price):
+                return
+
+            # 5. Update trailing SL + PnL
             await self._price_update_uc.execute(self.bot, self.position, self.calculator, current_price)
 
         except Exception as e:
             logger.error(f"[ERROR] on_price_update bot={self.bot_id}: {e}", exc_info=True)
+
+    async def _reconcile_with_exchange(self, current_price: float) -> bool:
+        """Раз в RECONCILE_INTERVAL_SEC сверяет позицию с биржей. Если на бирже
+        её уже нет — закрывает сделку у себя. True, если позиция закрыта."""
+        now = time.time()
+        if now - self._last_reconcile < RECONCILE_INTERVAL_SEC or not self._executor:
+            return False
+        self._last_reconcile = now
+        try:
+            size = await self._executor.get_open_position_size(self.bot.symbol, self.bot.side)
+        except Exception as e:
+            logger.warning(f"[RECONCILE] bot={self.bot_id} failed: {e}")
+            return False
+        if size is None or size > 0:
+            return False
+        logger.warning(
+            f"[EXCHANGE_CLOSED] bot={self.bot_id} {self.bot.symbol} {self.bot.side} — "
+            f"no position on exchange, closing locally @ {current_price}"
+        )
+        await self._close_position(current_price, "EXCHANGE_CLOSED", send_to_exchange=False)
+        return True
 
     async def _add_pyramiding_order(self, current_price: float):
         self._is_adding_order = True
@@ -288,17 +362,20 @@ class StrategyEngine:
             )
             if not result["success"]:
                 logger.error(f"Pyramiding order failed: {result.get('error')}")
+            # Только что докупили — биржа может ещё не отдавать обновлённую позицию
+            self._last_reconcile = time.time()
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error adding pyramiding order: {e}")
         finally:
             self._is_adding_order = False
 
-    async def _close_position(self, exit_price: float, exit_reason: str):
+    async def _close_position(self, exit_price: float, exit_reason: str, send_to_exchange: bool = True):
         self._is_closing = True
         try:
             await self._close_uc.execute(
-                self.bot, self.position, self.calculator, exit_price, exit_reason, self.db
+                self.bot, self.position, self.calculator, exit_price, exit_reason, self.db,
+                send_to_exchange=send_to_exchange,
             )
             self.current_state = BotState.IDLE
             self.position = None

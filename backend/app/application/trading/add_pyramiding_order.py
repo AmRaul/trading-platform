@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class AddPyramidingOrderUseCase:
+    """Добавляет ордер к позиции: добор пирамидинга или страховочный DCA."""
     def __init__(self, executor: ExchangeExecutor, market_data: MarketData, publisher: EventPublisher):
         self.executor = executor
         self.market_data = market_data
@@ -81,8 +82,8 @@ class AddPyramidingOrderUseCase:
 
         sl_pct = calculator.calculate_sl_percent(order_number)
         max_orders = bot.config.get("order_count", 4)
-        # Set TP only on the last pyramiding order — earlier orders only update SL
-        tp_pct = bot.config.get("tp_percent", 3.0) if order_number >= max_orders else None
+        # Пирамидинг — TP только на последнем ордере; DCA — после каждого (от новой средней)
+        tp_pct = calculator.tp_percent_for_order(order_number)
 
         logger.info(
             f"[SL/TP UPDATE] order={order_number}/{max_orders} sl={sl_pct}% "

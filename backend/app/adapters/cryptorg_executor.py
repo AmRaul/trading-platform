@@ -16,7 +16,6 @@ class CryptorgExecutorAdapter:
         leverage: int,
         sl_percent: float,
         tp_percent: float,
-        dca_config: Optional[Dict] = None,
     ) -> Dict:
         return await self._client.open_position(
             symbol=symbol,
@@ -25,7 +24,6 @@ class CryptorgExecutorAdapter:
             leverage=leverage,
             sl_percent=sl_percent,
             tp_percent=tp_percent,
-            dca_config=dca_config,
         )
 
     async def add_to_position(self, symbol: str, side: str, amount_usdt: float) -> Dict:
@@ -37,6 +35,11 @@ class CryptorgExecutorAdapter:
 
     async def close_position(self, symbol: str, side: str, quantity: Optional[float] = None) -> Dict:
         return await self._client.close_position(symbol=symbol, side=side, quantity=quantity)
+
+    async def get_open_position_size(self, symbol: str, side: str) -> Optional[float]:
+        # Ghost Bot webhook API только отправляет команды — читать позиции нельзя.
+        # Закрытие по TP/SL ловим по цене в StrategyEngine, как и для Bybit.
+        return None
 
     async def update_stop_and_tp(
         self,

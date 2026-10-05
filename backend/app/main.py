@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.redis import init_redis, close_redis
-from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin
+from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin, ready_strategies
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,8 +33,12 @@ async def lifespan(app: FastAPI):
     await price_stream_manager.restore_active_strategies()
     logger.info("Active strategies restored")
 
+    from app.services.signal_scheduler import signal_scheduler
+    signal_scheduler.start()
+
     yield
 
+    await signal_scheduler.stop()
     await price_stream_manager.stop()
     logger.info("Shutting down...")
     await close_redis()
@@ -70,6 +74,7 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(accounts.router, prefix="/api/accounts", tags=["accounts"])
 app.include_router(bybit_accounts.router, prefix="/api/bybit-accounts", tags=["bybit-accounts"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(ready_strategies.router, prefix="/api/ready-strategies", tags=["ready-strategies"])
 
 
 @app.get("/")
