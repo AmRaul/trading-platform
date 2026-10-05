@@ -55,3 +55,6 @@ INTEGRATION_SUMMARY.md
 PRODUCTION_READINESS_PROGRESS.md
 STRATEGY_LOGIC.md
 TECH_LEAD_REVIEW.md
+
+# Локальные исследования стратегий (скрипты бэктестов)
+services/backtester/research/
