@@ -28,22 +28,48 @@ class PositionCalculator:
             return self.orders[-1].size * multiplier
         return self.orders[-1].size * self.config["pyramiding_multiplier"]
 
+    def is_dca(self) -> bool:
+        return self.config.get("bot_type", "pyramiding") == "dca"
+
+    def is_grid_full(self) -> bool:
+        return len(self.orders) >= self.config["order_count"]
+
+    def next_dca_price(self, side: str) -> Optional[float]:
+        """Цена следующего страховочного ордера: шаг от ПРЕДЫДУЩЕГО ордера,
+        каждый следующий шаг × dca_multiplier_price (1.0 — равные шаги).
+        order_count — всего ордеров вместе со входом."""
+        if not self.orders or self.is_grid_full():
+            return None
+        safety_index = len(self.orders) - 1  # 0 для первого страховочного
+        step = self.config["step_percent"] / 100 * self.config.get("dca_multiplier_price", 1.0) ** safety_index
+        last = self.orders[-1].price
+        return last * (1 - step) if side == "LONG" else last * (1 + step)
+
     def should_add_dca_order(self, side: str, current_price: float) -> bool:
-        if not self.orders:
+        level = self.next_dca_price(side)
+        if level is None:
             return False
-        if len(self.orders) >= self.config["order_count"]:
+        return current_price <= level if side == "LONG" else current_price >= level
+
+    def tp_percent_for_order(self, order_number: int) -> Optional[float]:
+        """DCA — тейк сразу и после каждого ордера (от новой средней);
+        пирамидинг — только после последнего ордера."""
+        if self.is_dca() or order_number >= self.config["order_count"]:
+            return self.config.get("tp_percent")
+        return None
+
+    def take_profit_price(self, side: str) -> Optional[float]:
+        tp = self.tp_percent_for_order(len(self.orders)) if self.orders else None
+        if tp is None:
+            return None
+        avg = self.calculate_average_price(self.orders)
+        return avg * (1 + tp / 100) if side == "LONG" else avg * (1 - tp / 100)
+
+    def is_take_profit_hit(self, side: str, current_price: float) -> bool:
+        tp_price = self.take_profit_price(side)
+        if tp_price is None:
             return False
-
-        step = self.config["step_percent"] / 100
-        buffer = self.config.get("order_trigger_buffer_pct", 0.05) / 100
-        effective_step = step - buffer
-
-        avg_price = self.calculate_average_price(self.orders)
-
-        if side == "LONG":
-            return (avg_price - current_price) / avg_price >= effective_step
-        else:
-            return (current_price - avg_price) / avg_price >= effective_step
+        return current_price >= tp_price if side == "LONG" else current_price <= tp_price
 
     def calculate_stop_loss(
         self,
@@ -57,6 +83,15 @@ class PositionCalculator:
 
         sl_initial = self.config.get("sl_initial")
         order_count = len(orders)
+
+        # DCA: стоп sl_initial% от СРЕДНЕЙ цены и только после заполнения всей
+        # сетки — до этого просадку закрывают страховочные ордера, а не стоп
+        if self.is_dca():
+            if sl_initial is None or order_count < self.config["order_count"]:
+                return 0.0, "disabled"
+            avg_price = self.calculate_average_price(orders)
+            sl_pct = sl_initial / 100
+            return (avg_price * (1 - sl_pct) if side == "LONG" else avg_price * (1 + sl_pct)), "dca"
 
         # sl_initial защищает только вход (order #1) и, если брейкивен на 2-м
         # ордере выключен, второй ордер. С order_count 3+ позиция всегда
@@ -179,6 +214,12 @@ class PositionCalculator:
         turned "SL disabled" into "stop immediately" for orders 1-2.
         """
         sl_initial = self.config.get("sl_initial")
+
+        # DCA: стоп от средней только при полной сетке (см. calculate_stop_loss)
+        if self.is_dca():
+            if sl_initial is None or order_count < self.config["order_count"]:
+                return None
+            return float(sl_initial)
 
         # order_count 3+ always runs on sl_after_order3, independent of
         # sl_initial — disabling the initial SL must not silently zero out

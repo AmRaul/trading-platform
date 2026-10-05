@@ -60,6 +60,9 @@ export const tradingApi = {
   limitEntry: (bot_id: number, limit_price: number) =>
     api.post('/api/trading/entry/limit', { bot_id, limit_price }),
 
+  signalEntry: (bot_id: number) =>
+    api.post('/api/trading/entry/signal', { bot_id }),
+
   cancelLimit: (bot_id: number) =>
     api.post('/api/trading/entry/cancel', { bot_id }),
 
@@ -87,6 +90,21 @@ export const tradesApi = {
   getAll: () => api.get('/api/trades/'),
 
   getByBot: (bot_id: number) => api.get(`/api/trades/bot/${bot_id}`),
+};
+
+// Ready strategies API
+export const readyStrategiesApi = {
+  getAll: () => api.get('/api/ready-strategies/'),
+
+  getOne: (slug: string) => api.get(`/api/ready-strategies/${slug}`),
+
+  launch: (slug: string, data: {
+    variant_key: string;
+    deposit_usdt: number;
+    exchange: 'cryptorg' | 'bybit';
+    account_id?: number | null;
+    bybit_account_id?: number | null;
+  }) => api.post(`/api/ready-strategies/${slug}/launch`, data),
 };
 
 // Screener API — signals service

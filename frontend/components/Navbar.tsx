@@ -11,6 +11,7 @@ const NAV_GROUPS = [
     label: 'Trading',
     links: [
       { href: '/dashboard', label: 'Dashboard' },
+      { href: '/ready-strategies', label: 'Ready Strategies' },
       { href: '/bots', label: 'Bots' },
       { href: '/positions', label: 'Positions' },
       { href: '/history', label: 'History' },

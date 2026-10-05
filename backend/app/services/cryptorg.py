@@ -49,9 +49,9 @@ class CryptorgClient:
         leverage: int = 10,
         sl_percent: float = 5.0,
         tp_percent: float = 3.0,
-        dca_config: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Open position with SL and TP in percent. Pass dca_config for native Cryptorg DCA."""
+        """Open position with SL and TP in percent. Averaging is driven by the
+        backend via add_to_position, not by Cryptorg's native DCA."""
         params: Dict = {
             "strategy": side.lower(),
             "pairs": [symbol],
@@ -77,17 +77,6 @@ class CryptorgClient:
             }
         else:
             params["stop"] = {"enabled": False}
-
-        if dca_config:
-            params["dca"] = {
-                "enabled": True,
-                "max": dca_config.get("max", 10),
-                "active": dca_config.get("active", 3),
-                "volume": str(dca_config.get("volume", order_volume_usdt)),
-                "percent": str(dca_config.get("percent", 2.0)),
-                "multiplierVolume": str(dca_config.get("multiplier_volume", 1.0)),
-                "multiplierPrice": str(dca_config.get("multiplier_price", 1.0)),
-            }
 
         payload = {"action": "open", "params": params}
 

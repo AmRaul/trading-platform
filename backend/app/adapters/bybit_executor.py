@@ -76,13 +76,7 @@ class BybitExecutorAdapter:
         leverage: int,
         sl_percent: float,
         tp_percent: float,
-        dca_config: Optional[Dict] = None,
     ) -> Dict:
-        # dca_config is Cryptorg-native-DCA-specific — Bybit has no equivalent,
-        # our own PositionCalculator/AddPyramidingOrderUseCase already handles
-        # averaging by placing separate add_to_position calls, so this is
-        # intentionally ignored here.
-        #
         # Size against the current ticker, not get_positions() — there's no
         # position yet (that's what we're about to open), and querying it
         # here would either return nothing or, worse, another bot's position
@@ -174,6 +168,20 @@ class BybitExecutorAdapter:
             return {"success": False, "error": order_result.get("retMsg")}
 
         return {"success": True, "symbol": symbol}
+
+    async def get_open_position_size(self, symbol: str, side: str) -> Optional[float]:
+        response = await self._run(
+            lambda: self._client.get_positions(category="linear", symbol=symbol)
+        )
+        if response.get("retCode") != 0:
+            logger.error(f"[Bybit] get_positions failed: {response.get('retMsg')}")
+            return None
+        wanted = self._side(side)
+        size = 0.0
+        for row in response.get("result", {}).get("list", []):
+            if row.get("side") == wanted and row.get("size"):
+                size += float(row["size"])
+        return size
 
     async def update_stop_and_tp(
         self,

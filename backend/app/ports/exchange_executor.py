@@ -34,3 +34,8 @@ class ExchangeExecutor(Protocol):
         sl_percent: float,
         tp_percent: float,
     ) -> Dict: ...
+
+    async def get_open_position_size(self, symbol: str, side: str) -> Optional[float]:
+        """Размер открытой позиции на бирже (0 — позиции нет).
+        None — биржа не умеет отдавать позиции, сверка невозможна."""
+        ...

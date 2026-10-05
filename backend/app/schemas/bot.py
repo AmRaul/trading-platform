@@ -6,6 +6,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class EntrySignalConfig(BaseModel):
+    """Автоматический вход по сигналу индикатора вместо ручного/лимитного."""
+
+    type: str = Field(default="mrc", pattern="^mrc$")
+    timeframe: str = Field(default="15", pattern="^(1|3|5|15|30|60|120|240)$")  # Bybit kline interval, минуты
+    mrc_length: int = Field(default=200, ge=20, le=900)
+    mrc_inner_mult: float = Field(default=1.0, gt=0, le=10)
+    mrc_outer_mult: float = Field(default=2.415, gt=0, le=10)
+    mrc_gradsize: float = Field(default=0.5, gt=0, le=5)
+    mrc_source: str = Field(default="hlc3", pattern="^(hlc3|close|ohlc4)$")
+    entry_band: int = Field(default=2, ge=1, le=3)
+    # Фильтр тренда: LONG только если close > EMA на trend_timeframe, SHORT — ниже.
+    # None — без фильтра.
+    trend_ema_period: Optional[int] = Field(default=200, ge=2, le=500)
+    trend_timeframe: str = Field(default="D", pattern="^(60|240|D)$")
+
+
 class StrategyConfig(BaseModel):
     """Trading strategy configuration."""
 
@@ -26,7 +43,6 @@ class StrategyConfig(BaseModel):
 
     # DCA-specific
     dca_multiplier: float = Field(default=1.0, ge=1.0, le=5.0)
-    dca_active_orders: int = Field(default=3, ge=1, le=10)
     dca_multiplier_price: float = Field(default=1.0, ge=1.0, le=3.0)
 
     # Stop loss — None means disabled
@@ -37,6 +53,9 @@ class StrategyConfig(BaseModel):
     trailing_percent: float = Field(default=1.5, gt=0, le=20)
     tp_percent: float = Field(default=3.0, gt=0, le=100)
     cycle: bool = Field(default=False)
+
+    # None — вход вручную/по лимиту; иначе бот ждёт сигнал (state SIGNAL)
+    entry_signal: Optional[EntrySignalConfig] = None
 
     @validator('entry_size_usdt')
     def validate_entry_size(cls, v):

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { botsApi, tradingApi, accountsApi, bybitAccountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Plus, Play, Square, Trash2, Settings, Clock, X } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
 
@@ -134,6 +134,11 @@ export default function BotsPage() {
     },
   });
 
+  const signalMutation = useMutation({
+    mutationFn: (bot_id: number) => tradingApi.signalEntry(bot_id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
+  });
+
   const cancelLimitMutation = useMutation({
     mutationFn: (bot_id: number) => tradingApi.cancelLimit(bot_id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
@@ -227,6 +232,16 @@ export default function BotsPage() {
                       <Play size={12} />
                       Войти
                     </button>
+                    {bot.config.entry_signal && (
+                      <button
+                        onClick={() => signalMutation.mutate(bot.id)}
+                        className="flex items-center justify-center gap-1 px-2 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs"
+                        title="Ждать сигнал MRC и войти автоматически"
+                      >
+                        <Activity size={12} />
+                        Сигнал
+                      </button>
+                    )}
                     <button
                       onClick={() => { setLimitBot(bot); setLimitPrice(''); }}
                       className="flex items-center justify-center gap-1 px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs"
@@ -234,6 +249,21 @@ export default function BotsPage() {
                     >
                       <Clock size={12} />
                       Лимит
+                    </button>
+                  </>
+                ) : bot.state === 'SIGNAL' ? (
+                  <>
+                    <div className="flex-1 flex items-center gap-1 px-2 py-1 bg-purple-900/50 border border-purple-700 rounded text-xs text-purple-300">
+                      <Activity size={12} />
+                      Жду сигнал MRC
+                      {bot.config.entry_signal?.trend_ema_period ? ` · EMA${bot.config.entry_signal.trend_ema_period}` : ''}
+                    </div>
+                    <button
+                      onClick={() => cancelLimitMutation.mutate(bot.id)}
+                      className="flex items-center justify-center px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                      title="Перестать ждать сигнал"
+                    >
+                      <X size={13} />
                     </button>
                   </>
                 ) : bot.state === 'WAITING' ? (
@@ -348,11 +378,14 @@ function PositionPanel({ bot }: { bot: any }) {
   const tpPercent = bot.config.tp_percent;
 
   const botType = bot.config.bot_type ?? 'pyramiding';
-  const nextAvgPrice = last_order_price != null && average_price != null
+  // DCA: следующий страховочный — шаг от предыдущего ордера, × dca_multiplier_price
+  // на каждом следующем уровне (mirrors PositionCalculator.next_dca_price)
+  const dcaStep = (stepPercent / 100) * Math.pow(bot.config.dca_multiplier_price ?? 1, Math.max(order_count - 1, 0));
+  const nextAvgPrice = last_order_price != null && average_price != null && order_count < maxOrders
     ? botType === 'dca'
       ? bot.side === 'LONG'
-        ? average_price * (1 - stepPercent / 100)
-        : average_price * (1 + stepPercent / 100)
+        ? last_order_price * (1 - dcaStep)
+        : last_order_price * (1 + dcaStep)
       : bot.side === 'LONG'
         ? last_order_price * (1 + stepPercent / 100)
         : last_order_price * (1 - stepPercent / 100)
@@ -414,6 +447,61 @@ function PositionPanel({ bot }: { bot: any }) {
   );
 }
 
+type EntrySignal = {
+  type: 'mrc';
+  timeframe: string;
+  entry_band: number;
+  trend_ema_period: number | null;
+  trend_timeframe: string;
+  [key: string]: unknown;
+};
+
+// Параметры MRC по умолчанию совпадают с бэктестом стратегии MRC DCA (length 200, outer 2.415, hlc3)
+const DEFAULT_ENTRY_SIGNAL: EntrySignal = {
+  type: 'mrc',
+  timeframe: '15',
+  entry_band: 2,
+  trend_ema_period: 200,
+  trend_timeframe: 'D',
+};
+
+function EntrySignalFields({
+  value,
+  onChange,
+}: {
+  value: EntrySignal | null;
+  onChange: (v: EntrySignal | null) => void;
+}) {
+  return (
+    <div className="col-span-2 border-t border-gray-700 pt-2">
+      <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+        <input
+          type="checkbox"
+          checked={!!value}
+          onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_ENTRY_SIGNAL } : null)}
+        />
+        Вход по сигналу MRC (15m, полоса 2)
+      </label>
+      {value && (
+        <div className="flex items-center gap-2 mt-2 text-xs">
+          <span className="text-gray-400">Фильтр тренда EMA на дневке</span>
+          <input
+            type="number"
+            min={2}
+            max={500}
+            placeholder="выкл"
+            value={value.trend_ema_period ?? ''}
+            onChange={(e) =>
+              onChange({ ...value, trend_ema_period: e.target.value ? parseInt(e.target.value) : null })
+            }
+            className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>(bot.exchange ?? 'cryptorg');
@@ -430,7 +518,6 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     leverage: bot.config.leverage ?? 10,
     pyramiding_multiplier: bot.config.pyramiding_multiplier ?? 1.5,
     dca_multiplier: bot.config.dca_multiplier ?? 1.0,
-    dca_active_orders: bot.config.dca_active_orders ?? 3,
     dca_multiplier_price: bot.config.dca_multiplier_price ?? 1.0,
     sl_enabled: bot.config.sl_initial !== null && bot.config.sl_initial !== undefined,
     sl_initial: bot.config.sl_initial ?? 5,
@@ -441,6 +528,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     trailing_percent: bot.config.trailing_percent ?? 1.5,
     sl_breakeven_on_order2: bot.config.sl_breakeven_on_order2 ?? true,
     cycle: bot.config.cycle ?? false,
+    entry_signal: bot.config.entry_signal ?? null,
   });
 
   const { data: accounts = [] } = useQuery<any[]>({
@@ -587,7 +675,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров</label>
+              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров (со входом)</label>
               <input type="number" value={formData.order_count}
                 onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" max="10" />
@@ -607,12 +695,6 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                   <input type="number" value={formData.dca_multiplier}
                     onChange={(e) => setFormData({ ...formData, dca_multiplier: parseFloat(e.target.value) })}
                     className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="1" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Активных DCA ордеров</label>
-                  <input type="number" value={formData.dca_active_orders}
-                    onChange={(e) => setFormData({ ...formData, dca_active_orders: parseInt(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" max="10" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">DCA мульт. шага цены</label>
@@ -696,6 +778,11 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 </label>
               </div>
             )}
+
+            <EntrySignalFields
+              value={formData.entry_signal}
+              onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
+            />
           </div>
 
           <div className="flex gap-2 pt-2">
@@ -731,7 +818,6 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     leverage: 10,
     pyramiding_multiplier: 1.5,
     dca_multiplier: 1.0,
-    dca_active_orders: 3,
     dca_multiplier_price: 1.0,
     sl_enabled: true,
     sl_initial: 5,
@@ -742,6 +828,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     trailing_percent: 1.5,
     sl_breakeven_on_order2: true,
     cycle: false,
+    entry_signal: null as EntrySignal | null,
   });
 
   const { data: accounts = [] } = useQuery<any[]>({
@@ -915,7 +1002,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
             </div>
 
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров</label>
+              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров (со входом)</label>
               <input type="number" value={formData.order_count}
                 onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
@@ -938,13 +1025,6 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                     onChange={(e) => setFormData({ ...formData, dca_multiplier: parseFloat(e.target.value) })}
                     className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
                     step="0.1" min="1" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">Активных DCA ордеров</label>
-                  <input type="number" value={formData.dca_active_orders}
-                    onChange={(e) => setFormData({ ...formData, dca_active_orders: parseInt(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                    min="1" max="10" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">DCA мульт. шага цены</label>
@@ -1032,6 +1112,11 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                 </label>
               </div>
             )}
+
+            <EntrySignalFields
+              value={formData.entry_signal}
+              onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
+            />
           </div>
 
           {errorMessage && (

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from typing import List
+from typing import List, Optional
 from app.core.database import get_db
 from app.models import User, Bot, Position, Order, Trade
 from app.models.cryptorg_account import CryptorgAccount
@@ -137,6 +137,38 @@ async def get_bot(
     return bot
 
 
+async def validate_bot_accounts(
+    db: AsyncSession,
+    user: User,
+    exchange: str,
+    account_id: Optional[int],
+    bybit_account_id: Optional[int],
+) -> None:
+    """Аккаунты бота должны принадлежать пользователю; bybit требует bybit_account_id."""
+    if account_id is not None:
+        acc_result = await db.execute(
+            select(CryptorgAccount).where(
+                CryptorgAccount.id == account_id,
+                CryptorgAccount.user_id == user.id,
+            )
+        )
+        if not acc_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Account not found")
+
+    if bybit_account_id is not None:
+        bybit_acc_result = await db.execute(
+            select(BybitAccount).where(
+                BybitAccount.id == bybit_account_id,
+                BybitAccount.user_id == user.id,
+            )
+        )
+        if not bybit_acc_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Bybit account not found")
+
+    if exchange == "bybit" and bybit_account_id is None:
+        raise HTTPException(status_code=400, detail="exchange=bybit requires bybit_account_id")
+
+
 @router.post("/", response_model=BotResponse)
 async def create_bot(
     bot_data: BotCreate,
@@ -144,28 +176,9 @@ async def create_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Create new bot"""
-    if bot_data.account_id is not None:
-        acc_result = await db.execute(
-            select(CryptorgAccount).where(
-                CryptorgAccount.id == bot_data.account_id,
-                CryptorgAccount.user_id == current_user.id,
-            )
-        )
-        if not acc_result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Account not found")
-
-    if bot_data.bybit_account_id is not None:
-        bybit_acc_result = await db.execute(
-            select(BybitAccount).where(
-                BybitAccount.id == bot_data.bybit_account_id,
-                BybitAccount.user_id == current_user.id,
-            )
-        )
-        if not bybit_acc_result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail="Bybit account not found")
-
-    if bot_data.exchange == "bybit" and bot_data.bybit_account_id is None:
-        raise HTTPException(status_code=400, detail="exchange=bybit requires bybit_account_id")
+    await validate_bot_accounts(
+        db, current_user, bot_data.exchange, bot_data.account_id, bot_data.bybit_account_id
+    )
 
     bot = Bot(
         user_id=current_user.id,
