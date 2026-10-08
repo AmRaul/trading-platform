@@ -28,6 +28,22 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Expired/invalid token → drop it and send the user to login
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const isAuthCall = error.config?.url?.startsWith('/api/auth/');
+    if (error.response?.status === 401 && !isAuthCall && typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('username');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 // Auth API
 export const authApi = {
   register: (username: string, password: string) =>
