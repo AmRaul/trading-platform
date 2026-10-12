@@ -57,7 +57,7 @@ export default function ReadyStrategiesPage() {
                     <h2 className="text-xl font-semibold">{s.name}</h2>
                   </div>
                   <p className="text-xs text-gray-500">
-                    {s.symbol} · {s.side} · {s.timeframe}
+                    {s.symbols.map((x: string) => x.replace('USDT', '')).join(' · ')} · {s.side} · {s.timeframe}
                   </p>
                 </div>
                 <span

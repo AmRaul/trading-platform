@@ -68,12 +68,16 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
   const accounts = exchange === 'bybit' ? bybitAccounts : cryptorgAccounts;
 
   const preset = variant.bot_preset;
+  const legs: string[] = strategy.symbols;
   const depositNum = parseFloat(deposit) || 0;
   const firstOrder = Math.round(depositNum * variant.first_order_pct_of_deposit) / 100;
-  const gridUnits = Array.from({ length: preset.order_count }, (_, i) => Math.pow(preset.dca_multiplier, i))
+  // dca: объём каждого следующего ордера ×dca_multiplier; pyramiding: ×pyramiding_multiplier
+  const mult = preset.bot_type === 'dca' ? preset.dca_multiplier : preset.pyramiding_multiplier;
+  const gridUnits = Array.from({ length: preset.order_count }, (_, i) => Math.pow(mult, i))
     .reduce((a, b) => a + b, 0);
-  const gridTotal = firstOrder * gridUnits;
+  const gridTotal = firstOrder * gridUnits * legs.length;
   const gridMargin = gridTotal / preset.leverage;
+  const signalName = preset.entry_signal?.type === 'supertrend' ? 'Supertrend' : 'MRC';
 
   const launch = useMutation({
     mutationFn: () =>
@@ -162,15 +166,19 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
           {depositNum > 0 && (
             <div className="bg-gray-900 rounded p-3 text-sm space-y-1">
               <div className="flex justify-between">
-                <span className="text-gray-400">Первый ордер ({variant.first_order_pct_of_deposit}%)</span>
+                <span className="text-gray-400">
+                  Первый ордер ({variant.first_order_pct_of_deposit}%){legs.length > 1 ? ` × ${legs.length} ботов` : ''}
+                </span>
                 <span className={firstOrder < 10 ? 'text-red-400' : ''}>${firstOrder.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">Вся сетка ({preset.order_count} ордеров, объём)</span>
+                <span className="text-gray-400">
+                  Все ордера ({preset.order_count}{legs.length > 1 ? ` × ${legs.length} монет` : ''}), объём
+                </span>
                 <span>${gridTotal.toFixed(0)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-400">Маржа всей сетки ({preset.leverage}x)</span>
+                <span className="text-gray-400">Маржа всех ордеров ({preset.leverage}x)</span>
                 <span>${gridMargin.toFixed(0)}</span>
               </div>
               {firstOrder < 10 && <p className="text-red-400 text-xs">Минимальный первый ордер — 10 USDT</p>}
@@ -178,7 +186,10 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
           )}
 
           <p className="text-xs text-gray-500">
-            Бот будет создан и сразу перейдёт в ожидание сигнала MRC. Позиция откроется автоматически на
+            {legs.length > 1
+              ? `Будет создано ${legs.length} ботов (${legs.map((x) => x.replace('USDT', '')).join(', ')}) на общий депозит, каждый сразу перейдёт`
+              : 'Бот будет создан и сразу перейдёт'}{' '}
+            в ожидание сигнала {signalName}. Позиция откроется автоматически на
             закрытии 15-минутной свечи, когда сработает сигнал. Результаты на истории не гарантируют доходность.
           </p>
 
@@ -228,7 +239,7 @@ export default function ReadyStrategyPage() {
               <div>
                 <h1 className="text-3xl font-bold">{s.name}</h1>
                 <p className="text-gray-500 text-sm mt-1">
-                  {s.symbol} · {s.side} · {s.timeframe}
+                  {s.symbols.map((x: string) => x.replace('USDT', '')).join(' · ')} · {s.side} · {s.timeframe}
                 </p>
               </div>
               <button
@@ -298,7 +309,7 @@ export default function ReadyStrategyPage() {
                   <Stat label="Сделок / стопов" value={`${m.trades} / ${m.stops}`} />
                   <Stat label="2021–2023" value={signed(m.period_2021_2023_pct)} />
                   <Stat label="2024–2026" value={signed(m.period_2024_2026_pct)} />
-                  <Stat label="Полная сетка" value={`${m.full_grid_fills} раз`} />
+                  <Stat label="Все ордера набраны" value={`${m.full_grid_fills} раз`} />
                   <Stat label="Самая долгая сделка" value={`${m.max_trade_days} дн.`} />
                 </div>
 

@@ -61,6 +61,8 @@ class ReadyStrategyBase(BaseModel):
     name: str
     summary: str
     symbol: str
+    # Монеты, на которые запускается стратегия: по боту на каждую
+    symbols: List[str]
     side: str
     timeframe: str
     launch_available: bool
@@ -73,10 +75,15 @@ class ReadyStrategyListItem(ReadyStrategyBase):
 class LaunchRequest(BaseModel):
     variant_key: str
     # Депозит под стратегию: размер первого ордера = deposit × % варианта
-    deposit_usdt: float = Field(gt=0, le=10_000_000)
+    deposit_usdt: float = Field(gt=0, le=10_000_000)  # общий на все боты стратегии
     exchange: str = Field(default="bybit", pattern="^(cryptorg|bybit)$")
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
+
+
+class StrategyLegInfo(BaseModel):
+    symbol: str
+    preset_overrides: dict
 
 
 class ReadyStrategyDetail(ReadyStrategyBase):
@@ -86,4 +93,5 @@ class ReadyStrategyDetail(ReadyStrategyBase):
     risk_notes: List[str]
     backtest_assumptions: List[str]
     launch_blockers: List[str]
+    legs: List[StrategyLegInfo]
     variants: List[ReadyStrategyVariant]

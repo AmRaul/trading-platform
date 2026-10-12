@@ -9,6 +9,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+RECONNECT_MIN_DELAY = 1
+RECONNECT_MAX_DELAY = 30
+
 
 class ConnectionManager:
     """Manage WebSocket connections from browser clients."""
@@ -100,31 +103,45 @@ class PriceStreamManager:
         self._pubsub_task = asyncio.create_task(self._listen_loop())
 
     async def _listen_loop(self):
-        redis = await get_redis()
-        self._pubsub = redis.pubsub()
-        if self._listened_channels:
-            await self._pubsub.subscribe(*self._listened_channels)
-        logger.info(f"[PriceStream] Redis pub/sub listener started, channels: {self._listened_channels}")
-        try:
-            async for message in self._pubsub.listen():
-                if message["type"] != "message":
-                    continue
-                try:
-                    data = json.loads(message["data"])
-                    exchange = data["exchange"]
-                    symbol = data["symbol"]
-                    price = float(data["price"])
-                    await manager.broadcast_price_update(symbol, price)
-                    await self._update_strategies(symbol, price)
-                except Exception as e:
-                    logger.error(f"[PriceStream] message error: {e}")
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"[PriceStream] listener crashed: {e}", exc_info=True)
-        finally:
-            if self._pubsub:
-                await self._pubsub.close()
+        """Читает цены из Redis pub/sub. При обрыве (Redis упал/перезапущен)
+        переподключается с нарастающей паузой и заново подписывается на все
+        каналы — иначе боты остаются без тиков до рестарта бэкенда."""
+        delay = RECONNECT_MIN_DELAY
+        while self._listened_channels:
+            try:
+                redis = await get_redis()
+                self._pubsub = redis.pubsub()
+                if self._listened_channels:
+                    await self._pubsub.subscribe(*self._listened_channels)
+                logger.info(f"[PriceStream] Redis pub/sub listener started, channels: {self._listened_channels}")
+                delay = RECONNECT_MIN_DELAY
+                async for message in self._pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+                    try:
+                        data = json.loads(message["data"])
+                        symbol = data["symbol"]
+                        price = float(data["price"])
+                        await manager.broadcast_price_update(symbol, price)
+                        await self._update_strategies(symbol, price)
+                    except Exception as e:
+                        logger.error(f"[PriceStream] message error: {e}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[PriceStream] listener lost Redis: {e} — reconnect in {delay}s")
+            finally:
+                await self._close_pubsub()
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, RECONNECT_MAX_DELAY)
+
+    async def _close_pubsub(self):
+        pubsub, self._pubsub = self._pubsub, None
+        if pubsub:
+            try:
+                await pubsub.close()
+            except Exception:
+                pass
 
     async def _subscribe_channel(self, exchange: str, symbol: str):
         channel = price_channel(exchange, symbol)
@@ -132,7 +149,11 @@ class PriceStreamManager:
             return
         self._listened_channels.add(channel)
         if self._pubsub:
-            await self._pubsub.subscribe(channel)
+            try:
+                await self._pubsub.subscribe(channel)
+            except Exception as e:
+                # Канал уже в _listened_channels — подпишемся при переподключении
+                logger.warning(f"[PriceStream] subscribe {channel} failed: {e}")
         await self._ensure_listener()
 
     async def start_price_stream(self, symbol: str, exchange: str = "bybit"):
