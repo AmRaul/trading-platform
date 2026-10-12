@@ -2,11 +2,14 @@ import time
 from typing import Dict, Optional
 
 from app.ports.market_data import MarketData
-from app.domain.signals.entry_signal import EntrySignalResult, evaluate_mrc_entry, closed_candles
+from app.domain.signals.entry_signal import EntrySignalResult, evaluate_entry, closed_candles
 
 # 1000 свечей — максимум одного запроса Bybit. Для MRC length=200 этого
 # достаточно: на истории BTC 15m risk_zone по окну 1000 совпадает с расчётом
-# по полной истории в 100% проверенных точек.
+# по полной истории в 100% проверенных точек. Supertrend 15m + EMA50/EMA200 на 4h
+# совпадают с исследованием на SOL/AVAX/LINK/ETH/XRP, кроме 1 бара из ~24 000 —
+# в точке пересечения EMA50/EMA200 (разница 3e-7), см.
+# services/backtester/research/verify_supertrend_live.py.
 SIGNAL_CANDLES = 1000
 TREND_CANDLES = 1000
 
@@ -33,4 +36,4 @@ class CheckEntrySignalUseCase:
             raw_trend = await self.market_data.get_klines(symbol, ttf, TREND_CANDLES)
             trend_candles = closed_candles(raw_trend, INTERVAL_MS[ttf], now_ms)
 
-        return evaluate_mrc_entry(side, signal_candles, trend_candles, cfg)
+        return evaluate_entry(side, signal_candles, trend_candles, cfg)

@@ -2,6 +2,8 @@
 Каталог готовых стратегий: описание + замороженный результат бэктеста.
 
 У стратегии есть варианты (разный размер первого ордера → разный риск).
+Стратегия на несколько монет задаётся через legs: при запуске создаётся
+по боту на монету, у каждой монеты свои поправки к пресету (например, трейлинг).
 Результаты бэктеста каждого варианта лежат в data/*.json и генерируются
 скриптами из services/backtester/research/ — руками не редактируются.
 """
@@ -20,7 +22,8 @@ class StrategyVariant:
     name: str
     description: str
     # Размер первого ордера в % от депозита — при запуске пересчитывается
-    # в entry_size_usdt от баланса пользователя
+    # в entry_size_usdt от депозита пользователя. В мультимонетной стратегии —
+    # первый ордер каждого бота в % от общего депозита
     first_order_pct_of_deposit: float
     # Поля, которые вариант переопределяет в bot_preset стратегии
     preset_overrides: dict
@@ -28,6 +31,13 @@ class StrategyVariant:
 
     def backtest(self) -> dict:
         return _load_backtest(self.backtest_file)
+
+
+@dataclass(frozen=True)
+class StrategyLeg:
+    """Монета мультимонетной стратегии: один бот при запуске."""
+    symbol: str
+    preset_overrides: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -49,13 +59,19 @@ class ReadyStrategy:
     variants: List[StrategyVariant]
     # Пока непустой — запуск недоступен, показываем причины
     launch_blockers: List[str] = field(default_factory=list)
+    # Пусто — один бот на symbol; иначе по боту на каждую монету
+    legs: List[StrategyLeg] = field(default_factory=list)
 
     @property
     def launch_available(self) -> bool:
         return not self.launch_blockers
 
-    def variant_preset(self, variant: StrategyVariant) -> dict:
-        return {**self.bot_preset, **variant.preset_overrides}
+    @property
+    def launch_legs(self) -> List[StrategyLeg]:
+        return self.legs or [StrategyLeg(self.symbol)]
+
+    def variant_preset(self, variant: StrategyVariant, leg: Optional[StrategyLeg] = None) -> dict:
+        return {**self.bot_preset, **variant.preset_overrides, **(leg.preset_overrides if leg else {})}
 
 
 @lru_cache
@@ -159,8 +175,119 @@ STRATEGIES: List[ReadyStrategy] = [
             ),
         ],
     ),
+    ReadyStrategy(
+        slug="alt-short-pyramid-5",
+        name="Шорт альтов · пирамидинг · 5 монет",
+        summary="Шорт SOL, AVAX, LINK, ETH и XRP в нисходящем тренде 4H: вход на развороте "
+                "Supertrend 15m, добор по ходу движения, выход широким трейлингом.",
+        description=(
+            "Трендовая стратегия на падении альтов. Каждая из пяти монет торгуется своим ботом: "
+            "когда монета в нисходящем тренде на 4-часовках (цена и EMA50 ниже EMA200), бот ждёт "
+            "разворота Supertrend вниз на 15-минутках и входит в шорт. Пока цена идёт в сторону сделки, "
+            "бот добирает ещё 3 ордера того же размера с шагом 0.5%, затем ведёт позицию трейлинг-стопом, "
+            "ширина которого подобрана под волатильность монеты (её медианный дневной диапазон). "
+            "Тейк-профита нет. Прибыль дают редкие длинные падения; около 80% сделок закрываются "
+            "небольшим убытком по стопу 2%. Лонги по тем же правилам убыточны и исключены."
+        ),
+        symbol="SOLUSDT",
+        side="SHORT",
+        timeframe="15m",
+        entry_rules=[
+            "Режим 4H: последняя закрытая 4h-свеча ниже EMA200 и EMA50 ниже EMA200",
+            "Триггер 15m: Supertrend(10, 3) развернулся вниз на закрытии свечи",
+            "Шорт по рынку на закрытии сигнальной свечи; одна позиция на монету",
+            "Пять независимых ботов: SOL, AVAX, LINK, ETH, XRP — депозит делится поровну",
+        ],
+        exit_rules=[
+            "3 добора того же размера по рынку: каждый, когда цена ушла на 0.5% ниже предыдущего "
+            "ордера (срабатывание с допуском 0.05% — на −0.45%)",
+            "Ордера 1–2: стоп 2% выше цены входа",
+            "С 3-го ордера: стоп 2% выше средней цены позиции",
+            "С 3-го ордера включается трейлинг: стоп = минимум цены × (1 + трейлинг), но не выше "
+            "стопа от средней; трейлинг = медианный дневной диапазон монеты: SOL 8.1%, AVAX 8.0%, "
+            "LINK 6.9%, ETH 5.0%, XRP 5.7%. Стоп только опускается",
+            "Без тейк-профита: выход только по стопу или трейлингу (рыночным ордером на тике), "
+            "затем бот снова ждёт сигнал",
+        ],
+        risk_notes=[
+            "Около 80% сделок убыточны: месяцы и даже годы могут быть около нуля "
+            "(2023: +2%, 2024: +10% в консервативном варианте)",
+            "Просадка от стартового депозита: до 31% в консервативном и до 63% в агрессивном "
+            "варианте (в карточке — от пика equity)",
+            "Стоп ограничивает убыток одной сделки, но не серию стопов подряд по всем пяти монетам",
+            "Проскальзывание не проверено: входы и доборы — рыночные ордера на тике, при шаге 0.5% "
+            "задержка исполнения заметно влияет на результат",
+            "В бэктесте шорт только получает funding 0.01%; при отрицательном funding он будет платить",
+            "Трейлинг и стоп ведёт бэкенд платформы по тикам цены; на бирже стоит только страховочный "
+            "стоп от средней. Если платформа недоступна, трейлинг не двигается",
+            "Минимальный лот биржи: при первом ордере меньше ≈$25 вход по ETH может быть отклонён",
+            "Трейлинг подобран по истории 2021 — середины 2024; проверка на 07.2024–10.2026 дала "
+            "результат не хуже",
+        ],
+        backtest_assumptions=[
+            "Данные: Binance USDT-M futures, 15m OHLC",
+            "Вход по close сигнальной свечи, доборы — по уровню при касании, гэп — по цене открытия",
+            "Комиссия 0.055% на каждый ордер и выход, стоп с проскальзыванием 0.05%",
+            "Funding 0.01% каждые 8 часов на открытый объём",
+            "Сопровождение позиции — код живого пирамидинг-бота (PositionCalculator)",
+            "Без реинвестирования: первый ордер фиксирован",
+        ],
+        bot_preset={
+            "bot_type": "pyramiding",
+            "order_count": 4,  # вход + 3 добора
+            "entry_size_usdt": 250,  # переопределяется вариантом
+            "step_percent": 0.5,
+            "leverage": 10,
+            "pyramiding_multiplier": 1.0,
+            "sl_initial": 2.0,
+            "sl_breakeven_on_order2": False,
+            "sl_after_order3": 2.0,
+            "use_trailing": True,
+            "trailing_percent": 8.1,  # переопределяется монетой
+            "tp_percent": 100.0,  # тейка нет — выход по трейлингу
+            "cycle": True,
+            "entry_signal": {
+                "type": "supertrend",
+                "timeframe": "15",
+                "st_period": 10,
+                "st_mult": 3.0,
+                "trend_ema_period": 200,
+                "trend_ema_fast": 50,
+                "trend_timeframe": "240",
+            },
+        },
+        legs=[
+            StrategyLeg("SOLUSDT", {"trailing_percent": 8.1}),
+            StrategyLeg("AVAXUSDT", {"trailing_percent": 8.0}),
+            StrategyLeg("LINKUSDT", {"trailing_percent": 6.9}),
+            StrategyLeg("ETHUSDT", {"trailing_percent": 5.0}),
+            StrategyLeg("XRPUSDT", {"trailing_percent": 5.7}),
+        ],
+        launch_blockers=[],
+        variants=[
+            StrategyVariant(
+                key="conservative",
+                name="Консервативный",
+                description="Первый ордер каждого бота — 5% депозита ($250 на $5 000), вся позиция "
+                            "по монете — 20%, по пяти монетам — 1 депозит. Около 22% в год, "
+                            "просадка до 31% от стартового депозита.",
+                first_order_pct_of_deposit=5.0,
+                preset_overrides={"entry_size_usdt": 250},
+                backtest_file="alt_short_pyramid_5_250.json",
+            ),
+            StrategyVariant(
+                key="aggressive",
+                name="Агрессивный",
+                description="Первый ордер каждого бота — 10% депозита ($500 на $5 000), по пяти "
+                            "монетам до 2 депозитов объёма. Около 45% в год, просадка до 63% "
+                            "от стартового депозита, худший месяц −31%.",
+                first_order_pct_of_deposit=10.0,
+                preset_overrides={"entry_size_usdt": 500},
+                backtest_file="alt_short_pyramid_5_500.json",
+            ),
+        ],
+    ),
 ]
-
 
 def list_strategies() -> List[ReadyStrategy]:
     return STRATEGIES

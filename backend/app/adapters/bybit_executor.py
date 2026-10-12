@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Dict, Optional
+from decimal import Decimal, ROUND_DOWN
+from typing import Dict, Optional, Tuple
 
 from pybit.unified_trading import HTTP
 
@@ -19,8 +20,44 @@ class BybitExecutorAdapter:
     actual fill price, not the pre-slippage entry estimate.
     """
 
+    # symbol -> (qtyStep, minOrderQty, tickSize); биржевые параметры меняются редко
+    _instruments: Dict[str, Tuple[Decimal, Decimal, Decimal]] = {}
+
     def __init__(self, api_key: str, api_secret: str, testnet: bool = False):
         self._client = HTTP(api_key=api_key, api_secret=api_secret, testnet=testnet)
+        self._testnet = testnet
+
+    async def _instrument(self, symbol: str) -> Optional[Tuple[Decimal, Decimal, Decimal]]:
+        key = f"{'test' if self._testnet else 'main'}:{symbol}"
+        if key not in self._instruments:
+            resp = await self._run(lambda: self._client.get_instruments_info(category="linear", symbol=symbol))
+            rows = resp.get("result", {}).get("list", []) if resp.get("retCode") == 0 else []
+            if not rows:
+                logger.error(f"[Bybit] get_instruments_info failed for {symbol}: {resp.get('retMsg')}")
+                return None
+            lot, price = rows[0]["lotSizeFilter"], rows[0]["priceFilter"]
+            self._instruments[key] = (Decimal(lot["qtyStep"]), Decimal(lot["minOrderQty"]), Decimal(price["tickSize"]))
+        return self._instruments[key]
+
+    async def _qty_for_usdt(self, symbol: str, amount_usdt: float, price: float) -> Tuple[Optional[str], str]:
+        """Объём в монетах, округлённый вниз до qtyStep. Bybit отклоняет qty
+        не кратный шагу лота. Возвращает (qty, ошибка)."""
+        inst = await self._instrument(symbol)
+        if not inst:
+            return None, f"No instrument info for {symbol}"
+        step, min_qty, _ = inst
+        qty = (Decimal(str(amount_usdt)) / Decimal(str(price)) / step).to_integral_value(ROUND_DOWN) * step
+        if qty < min_qty:
+            return None, (f"{amount_usdt:.2f} USDT < минимального лота {symbol}: "
+                          f"{min_qty} ≈ {float(min_qty) * price:.2f} USDT")
+        return format(qty.normalize(), "f"), ""
+
+    async def _price_str(self, symbol: str, price: float) -> str:
+        inst = await self._instrument(symbol)
+        if not inst:
+            return str(round(price, 8))
+        tick = inst[2]
+        return format(((Decimal(str(price)) / tick).to_integral_value() * tick).normalize(), "f")
 
     async def _run(self, fn):
         loop = asyncio.get_event_loop()
@@ -54,10 +91,10 @@ class BybitExecutorAdapter:
 
         if sl_percent is not None:
             sl_price = avg_price * (1 - sl_percent / 100) if is_long else avg_price * (1 + sl_percent / 100)
-            params["stopLoss"] = str(round(sl_price, 8))
+            params["stopLoss"] = await self._price_str(symbol, sl_price)
         if tp_percent is not None:
             tp_price = avg_price * (1 + tp_percent / 100) if is_long else avg_price * (1 - tp_percent / 100)
-            params["takeProfit"] = str(round(tp_price, 8))
+            params["takeProfit"] = await self._price_str(symbol, tp_price)
 
         if "stopLoss" not in params and "takeProfit" not in params:
             return {"success": True}
@@ -85,7 +122,10 @@ class BybitExecutorAdapter:
         if ticker.get("retCode") != 0 or not ticker.get("result", {}).get("list"):
             return {"success": False, "error": "Failed to get ticker for qty sizing"}
         last_price = float(ticker["result"]["list"][0]["lastPrice"])
-        qty = order_volume_usdt / last_price
+        qty, err = await self._qty_for_usdt(symbol, order_volume_usdt, last_price)
+        if qty is None:
+            logger.error(f"[Bybit] open_position: {err}")
+            return {"success": False, "error": err}
 
         order_result = await self._run(
             lambda: self._client.place_order(
@@ -93,7 +133,7 @@ class BybitExecutorAdapter:
                 symbol=symbol,
                 side=self._side(side),
                 orderType="Market",
-                qty=str(round(qty, 8)),
+                qty=qty,
                 leverage=str(leverage),
             )
         )
@@ -116,7 +156,10 @@ class BybitExecutorAdapter:
         if ticker.get("retCode") != 0 or not ticker.get("result", {}).get("list"):
             return {"success": False, "error": "Failed to get ticker for qty sizing"}
         last_price = float(ticker["result"]["list"][0]["lastPrice"])
-        qty = amount_usdt / last_price
+        qty, err = await self._qty_for_usdt(symbol, amount_usdt, last_price)
+        if qty is None:
+            logger.error(f"[Bybit] add_to_position: {err}")
+            return {"success": False, "error": err}
 
         order_result = await self._run(
             lambda: self._client.place_order(
@@ -124,7 +167,7 @@ class BybitExecutorAdapter:
                 symbol=symbol,
                 side=self._side(side),
                 orderType="Market",
-                qty=str(round(qty, 8)),
+                qty=qty,
             )
         )
         if order_result.get("retCode") != 0:

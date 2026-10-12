@@ -173,12 +173,11 @@ async def set_position_trailing(
             bot.side, calculator.orders, current_price, trailing_enabled=False
         )
 
-        sl_pct = calculator.calculate_sl_percent(position.order_count)
-        max_orders = bot.config.get("order_count", 4)
+        sl_pct = calculator.exchange_sl_percent(bot.side)
         # Mirror add_pyramiding_order.py: TP only goes live on the exchange
         # once the last pyramiding order has filled — passing tp_percent=None
         # unconditionally here would wrongly clear an already-active TP.
-        tp_pct = bot.config.get("tp_percent", 3.0) if position.order_count >= max_orders else None
+        tp_pct = calculator.tp_percent_for_order(position.order_count)
 
         account = None
         if bot.account_id:

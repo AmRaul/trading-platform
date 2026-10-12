@@ -19,6 +19,7 @@ def _base(s: ReadyStrategy) -> dict:
         "name": s.name,
         "summary": s.summary,
         "symbol": s.symbol,
+        "symbols": [leg.symbol for leg in s.launch_legs],
         "side": s.side,
         "timeframe": s.timeframe,
         "launch_available": s.launch_available,
@@ -48,6 +49,7 @@ async def get_ready_strategy(slug: str, current_user: User = Depends(get_current
         "risk_notes": s.risk_notes,
         "backtest_assumptions": s.backtest_assumptions,
         "launch_blockers": s.launch_blockers,
+        "legs": [{"symbol": leg.symbol, "preset_overrides": leg.preset_overrides} for leg in s.launch_legs],
         "variants": [
             {
                 "key": v.key,
@@ -62,15 +64,15 @@ async def get_ready_strategy(slug: str, current_user: User = Depends(get_current
     }
 
 
-@router.post("/{slug}/launch", response_model=BotResponse)
+@router.post("/{slug}/launch", response_model=List[BotResponse])
 async def launch_ready_strategy(
     slug: str,
     request: LaunchRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Запуск в один клик: создаёт бота из пресета варианта и сразу ставит его
-    в ожидание сигнала входа (state SIGNAL)."""
+    """Запуск в один клик: создаёт по боту на каждую монету стратегии из пресета
+    варианта и сразу ставит их в ожидание сигнала входа (state SIGNAL)."""
     s = get_strategy(slug)
     if not s:
         raise HTTPException(status_code=404, detail="Strategy not found")
@@ -87,28 +89,33 @@ async def launch_ready_strategy(
         raise HTTPException(status_code=400, detail="exchange=cryptorg requires account_id")
 
     entry_size = round(request.deposit_usdt * variant.first_order_pct_of_deposit / 100, 2)
-    try:
-        config = StrategyConfig(**{**s.variant_preset(variant), "entry_size_usdt": entry_size})
-    except ValidationError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Первый ордер {entry_size} USDT вне допустимых границ: "
-                   + "; ".join(err["msg"] for err in e.errors()),
-        )
+    multi = len(s.launch_legs) > 1
+    bots = []
+    for leg in s.launch_legs:
+        try:
+            config = StrategyConfig(**{**s.variant_preset(variant, leg), "entry_size_usdt": entry_size})
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Первый ордер {entry_size} USDT вне допустимых границ: "
+                       + "; ".join(err["msg"] for err in e.errors()),
+            )
+        bots.append(Bot(
+            user_id=current_user.id,
+            exchange=request.exchange,
+            account_id=request.account_id if request.exchange == "cryptorg" else None,
+            bybit_account_id=request.bybit_account_id if request.exchange == "bybit" else None,
+            name=f"{s.name} · {variant.name}" + (f" · {leg.symbol}" if multi else ""),
+            symbol=leg.symbol,
+            side=s.side,
+            config=config.model_dump(),
+            state="SIGNAL",
+            is_active=False,
+        ))
 
-    bot = Bot(
-        user_id=current_user.id,
-        exchange=request.exchange,
-        account_id=request.account_id if request.exchange == "cryptorg" else None,
-        bybit_account_id=request.bybit_account_id if request.exchange == "bybit" else None,
-        name=f"{s.name} · {variant.name}",
-        symbol=s.symbol,
-        side=s.side,
-        config=config.model_dump(),
-        state="SIGNAL",
-        is_active=False,
-    )
-    db.add(bot)
+    for bot in bots:
+        db.add(bot)
     await db.commit()
-    await db.refresh(bot)
-    return bot
+    for bot in bots:
+        await db.refresh(bot)
+    return bots

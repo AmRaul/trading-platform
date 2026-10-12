@@ -80,7 +80,7 @@ class AddPyramidingOrderUseCase:
         position.current_sl = sl_price
         position.order_count = order_number
 
-        sl_pct = calculator.calculate_sl_percent(order_number)
+        sl_pct = calculator.exchange_sl_percent(bot.side)
         max_orders = bot.config.get("order_count", 4)
         # Пирамидинг — TP только на последнем ордере; DCA — после каждого (от новой средней)
         tp_pct = calculator.tp_percent_for_order(order_number)

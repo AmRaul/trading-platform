@@ -1,0 +1,430 @@
+{
+  "params": {
+    "symbols": [
+      "SOLUSDT",
+      "AVAXUSDT",
+      "LINKUSDT",
+      "ETHUSDT",
+      "XRPUSDT"
+    ],
+    "side": "SHORT",
+    "timeframe": "15m",
+    "regime": {
+      "timeframe": "4h",
+      "ema_fast": 50,
+      "ema_slow": 200
+    },
+    "supertrend": {
+      "period": 10,
+      "mult": 3.0
+    },
+    "order_count": 4,
+    "step_percent": 0.5,
+    "sl_percent": 2.0,
+    "trailing_percent": {
+      "SOLUSDT": 8.1,
+      "AVAXUSDT": 8.0,
+      "LINKUSDT": 6.9,
+      "ETHUSDT": 5.0,
+      "XRPUSDT": 5.7
+    },
+    "deposit": 5000.0,
+    "first_order": 500.0
+  },
+  "period": {
+    "start": "2021-01-01",
+    "end": "2026-10-02"
+  },
+  "metrics": {
+    "total_return_pct": 257.0,
+    "avg_annual_return_pct": 44.7,
+    "max_drawdown_pct": 26.6,
+    "trades": 2665,
+    "win_rate_pct": 20.8,
+    "stops": 2111,
+    "full_grid_fills": 1595,
+    "avg_trade_hours": 29.1,
+    "max_trade_days": 29.6,
+    "liquidations": 0,
+    "period_2021_2023_pct": 161.3,
+    "period_2024_2026_pct": 95.7
+  },
+  "yearly": [
+    {
+      "year": 2021,
+      "return_pct": 41.1
+    },
+    {
+      "year": 2022,
+      "return_pct": 115.7
+    },
+    {
+      "year": 2023,
+      "return_pct": 4.8
+    },
+    {
+      "year": 2024,
+      "return_pct": 19.0
+    },
+    {
+      "year": 2025,
+      "return_pct": 48.4
+    },
+    {
+      "year": 2026,
+      "return_pct": 29.2
+    }
+  ],
+  "equity_curve": [
+    {
+      "date": "2021-01-31",
+      "equity": 5000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "date": "2021-02-28",
+      "equity": 5000.0,
+      "drawdown_pct": 0.0
+    },
+    {
+      "date": "2021-03-31",
+      "equity": 4482.63,
+      "drawdown_pct": 11.16
+    },
+    {
+      "date": "2021-04-30",
+      "equity": 4091.59,
+      "drawdown_pct": 18.91
+    },
+    {
+      "date": "2021-05-31",
+      "equity": 4362.58,
+      "drawdown_pct": 13.54
+    },
+    {
+      "date": "2021-06-30",
+      "equity": 6286.06,
+      "drawdown_pct": 12.39
+    },
+    {
+      "date": "2021-07-31",
+      "equity": 6745.48,
+      "drawdown_pct": 18.71
+    },
+    {
+      "date": "2021-08-31",
+      "equity": 6745.48,
+      "drawdown_pct": 18.71
+    },
+    {
+      "date": "2021-09-30",
+      "equity": 6919.33,
+      "drawdown_pct": 16.61
+    },
+    {
+      "date": "2021-10-31",
+      "equity": 6700.67,
+      "drawdown_pct": 19.25
+    },
+    {
+      "date": "2021-11-30",
+      "equity": 6679.48,
+      "drawdown_pct": 19.5
+    },
+    {
+      "date": "2021-12-31",
+      "equity": 7056.17,
+      "drawdown_pct": 15.53
+    },
+    {
+      "date": "2022-01-31",
+      "equity": 8083.27,
+      "drawdown_pct": 15.27
+    },
+    {
+      "date": "2022-02-28",
+      "equity": 8101.66,
+      "drawdown_pct": 15.08
+    },
+    {
+      "date": "2022-03-31",
+      "equity": 7655.65,
+      "drawdown_pct": 19.76
+    },
+    {
+      "date": "2022-04-30",
+      "equity": 9042.86,
+      "drawdown_pct": 5.22
+    },
+    {
+      "date": "2022-05-31",
+      "equity": 10245.33,
+      "drawdown_pct": 9.98
+    },
+    {
+      "date": "2022-06-30",
+      "equity": 12855.77,
+      "drawdown_pct": 4.1
+    },
+    {
+      "date": "2022-07-31",
+      "equity": 12276.98,
+      "drawdown_pct": 8.42
+    },
+    {
+      "date": "2022-08-31",
+      "equity": 12734.3,
+      "drawdown_pct": 5.01
+    },
+    {
+      "date": "2022-09-30",
+      "equity": 11348.83,
+      "drawdown_pct": 15.34
+    },
+    {
+      "date": "2022-10-31",
+      "equity": 11629.11,
+      "drawdown_pct": 13.25
+    },
+    {
+      "date": "2022-11-30",
+      "equity": 11818.71,
+      "drawdown_pct": 11.84
+    },
+    {
+      "date": "2022-12-31",
+      "equity": 12805.13,
+      "drawdown_pct": 4.48
+    },
+    {
+      "date": "2023-01-31",
+      "equity": 12474.3,
+      "drawdown_pct": 6.95
+    },
+    {
+      "date": "2023-02-28",
+      "equity": 12385.95,
+      "drawdown_pct": 7.61
+    },
+    {
+      "date": "2023-03-31",
+      "equity": 12406.47,
+      "drawdown_pct": 8.87
+    },
+    {
+      "date": "2023-04-30",
+      "equity": 12173.2,
+      "drawdown_pct": 10.59
+    },
+    {
+      "date": "2023-05-31",
+      "equity": 12157.06,
+      "drawdown_pct": 10.71
+    },
+    {
+      "date": "2023-06-30",
+      "equity": 12540.55,
+      "drawdown_pct": 8.15
+    },
+    {
+      "date": "2023-07-31",
+      "equity": 12390.96,
+      "drawdown_pct": 9.24
+    },
+    {
+      "date": "2023-08-31",
+      "equity": 13821.1,
+      "drawdown_pct": 0.48
+    },
+    {
+      "date": "2023-09-30",
+      "equity": 13353.94,
+      "drawdown_pct": 6.99
+    },
+    {
+      "date": "2023-10-31",
+      "equity": 13129.1,
+      "drawdown_pct": 8.56
+    },
+    {
+      "date": "2023-11-30",
+      "equity": 13129.1,
+      "drawdown_pct": 8.56
+    },
+    {
+      "date": "2023-12-31",
+      "equity": 13062.66,
+      "drawdown_pct": 9.02
+    },
+    {
+      "date": "2024-01-31",
+      "equity": 12744.47,
+      "drawdown_pct": 11.24
+    },
+    {
+      "date": "2024-02-29",
+      "equity": 12451.4,
+      "drawdown_pct": 13.28
+    },
+    {
+      "date": "2024-03-31",
+      "equity": 12246.49,
+      "drawdown_pct": 14.71
+    },
+    {
+      "date": "2024-04-30",
+      "equity": 13911.28,
+      "drawdown_pct": 3.11
+    },
+    {
+      "date": "2024-05-31",
+      "equity": 13404.16,
+      "drawdown_pct": 6.84
+    },
+    {
+      "date": "2024-06-30",
+      "equity": 13810.51,
+      "drawdown_pct": 5.46
+    },
+    {
+      "date": "2024-07-31",
+      "equity": 14540.09,
+      "drawdown_pct": 7.94
+    },
+    {
+      "date": "2024-08-31",
+      "equity": 15068.75,
+      "drawdown_pct": 4.59
+    },
+    {
+      "date": "2024-09-30",
+      "equity": 14506.57,
+      "drawdown_pct": 8.15
+    },
+    {
+      "date": "2024-10-31",
+      "equity": 14040.99,
+      "drawdown_pct": 11.1
+    },
+    {
+      "date": "2024-11-30",
+      "equity": 13861.19,
+      "drawdown_pct": 12.24
+    },
+    {
+      "date": "2024-12-31",
+      "equity": 14011.2,
+      "drawdown_pct": 11.29
+    },
+    {
+      "date": "2025-01-31",
+      "equity": 13355.2,
+      "drawdown_pct": 15.44
+    },
+    {
+      "date": "2025-02-28",
+      "equity": 15079.23,
+      "drawdown_pct": 4.53
+    },
+    {
+      "date": "2025-03-31",
+      "equity": 15544.46,
+      "drawdown_pct": 4.78
+    },
+    {
+      "date": "2025-04-30",
+      "equity": 15936.23,
+      "drawdown_pct": 8.44
+    },
+    {
+      "date": "2025-05-31",
+      "equity": 15882.43,
+      "drawdown_pct": 8.75
+    },
+    {
+      "date": "2025-06-30",
+      "equity": 15753.89,
+      "drawdown_pct": 9.48
+    },
+    {
+      "date": "2025-07-31",
+      "equity": 15524.41,
+      "drawdown_pct": 10.8
+    },
+    {
+      "date": "2025-08-31",
+      "equity": 15638.6,
+      "drawdown_pct": 10.15
+    },
+    {
+      "date": "2025-09-30",
+      "equity": 15233.46,
+      "drawdown_pct": 12.48
+    },
+    {
+      "date": "2025-10-31",
+      "equity": 15263.75,
+      "drawdown_pct": 12.3
+    },
+    {
+      "date": "2025-11-30",
+      "equity": 16418.91,
+      "drawdown_pct": 5.66
+    },
+    {
+      "date": "2025-12-31",
+      "equity": 16396.83,
+      "drawdown_pct": 5.79
+    },
+    {
+      "date": "2026-01-31",
+      "equity": 17597.22,
+      "drawdown_pct": 0.91
+    },
+    {
+      "date": "2026-02-28",
+      "equity": 19351.24,
+      "drawdown_pct": 2.8
+    },
+    {
+      "date": "2026-03-31",
+      "equity": 17775.26,
+      "drawdown_pct": 10.72
+    },
+    {
+      "date": "2026-04-30",
+      "equity": 17225.16,
+      "drawdown_pct": 13.48
+    },
+    {
+      "date": "2026-05-31",
+      "equity": 17202.87,
+      "drawdown_pct": 13.59
+    },
+    {
+      "date": "2026-06-30",
+      "equity": 18568.53,
+      "drawdown_pct": 6.73
+    },
+    {
+      "date": "2026-07-31",
+      "equity": 18105.38,
+      "drawdown_pct": 9.06
+    },
+    {
+      "date": "2026-08-31",
+      "equity": 17848.97,
+      "drawdown_pct": 10.35
+    },
+    {
+      "date": "2026-09-30",
+      "equity": 17848.97,
+      "drawdown_pct": 10.35
+    },
+    {
+      "date": "2026-10-31",
+      "equity": 17848.97,
+      "drawdown_pct": 10.35
+    }
+  ]
+}

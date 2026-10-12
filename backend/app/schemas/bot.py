@@ -9,8 +9,11 @@ logger = logging.getLogger(__name__)
 class EntrySignalConfig(BaseModel):
     """Автоматический вход по сигналу индикатора вместо ручного/лимитного."""
 
-    type: str = Field(default="mrc", pattern="^mrc$")
+    # mrc — цена в полосе MRC; supertrend — разворот Supertrend в сторону сделки
+    type: str = Field(default="mrc", pattern="^(mrc|supertrend)$")
     timeframe: str = Field(default="15", pattern="^(1|3|5|15|30|60|120|240)$")  # Bybit kline interval, минуты
+    st_period: int = Field(default=10, ge=2, le=100)
+    st_mult: float = Field(default=3.0, gt=0, le=10)
     mrc_length: int = Field(default=200, ge=20, le=900)
     mrc_inner_mult: float = Field(default=1.0, gt=0, le=10)
     mrc_outer_mult: float = Field(default=2.415, gt=0, le=10)
@@ -20,6 +23,8 @@ class EntrySignalConfig(BaseModel):
     # Фильтр тренда: LONG только если close > EMA на trend_timeframe, SHORT — ниже.
     # None — без фильтра.
     trend_ema_period: Optional[int] = Field(default=200, ge=2, le=500)
+    # Доп. условие режима: LONG — EMA fast выше EMA trend_ema_period, SHORT — ниже
+    trend_ema_fast: Optional[int] = Field(default=None, ge=2, le=500)
     trend_timeframe: str = Field(default="D", pattern="^(60|240|D)$")
 
 

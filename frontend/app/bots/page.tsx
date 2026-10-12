@@ -236,7 +236,7 @@ export default function BotsPage() {
                       <button
                         onClick={() => signalMutation.mutate(bot.id)}
                         className="flex items-center justify-center gap-1 px-2 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs"
-                        title="Ждать сигнал MRC и войти автоматически"
+                        title={`Ждать сигнал ${signalName(bot.config.entry_signal)} и войти автоматически`}
                       >
                         <Activity size={12} />
                         Сигнал
@@ -255,8 +255,8 @@ export default function BotsPage() {
                   <>
                     <div className="flex-1 flex items-center gap-1 px-2 py-1 bg-purple-900/50 border border-purple-700 rounded text-xs text-purple-300">
                       <Activity size={12} />
-                      Жду сигнал MRC
-                      {bot.config.entry_signal?.trend_ema_period ? ` · EMA${bot.config.entry_signal.trend_ema_period}` : ''}
+                      Жду сигнал {signalName(bot.config.entry_signal)}
+                      {trendLabel(bot.config.entry_signal)}
                     </div>
                     <button
                       onClick={() => cancelLimitMutation.mutate(bot.id)}
@@ -448,7 +448,7 @@ function PositionPanel({ bot }: { bot: any }) {
 }
 
 type EntrySignal = {
-  type: 'mrc';
+  type: 'mrc' | 'supertrend';
   timeframe: string;
   entry_band: number;
   trend_ema_period: number | null;
@@ -465,6 +465,18 @@ const DEFAULT_ENTRY_SIGNAL: EntrySignal = {
   trend_timeframe: 'D',
 };
 
+const TF_LABEL: Record<string, string> = { '60': '1h', '240': '4h', D: 'дневке' };
+
+function signalName(s: EntrySignal | null | undefined) {
+  return s?.type === 'supertrend' ? `Supertrend ${s.timeframe}m` : 'MRC';
+}
+
+function trendLabel(s: EntrySignal | null | undefined) {
+  if (!s?.trend_ema_period) return '';
+  const fast = s.trend_ema_fast ? `EMA${s.trend_ema_fast}/` : 'EMA';
+  return ` · ${fast}${s.trend_ema_period} ${TF_LABEL[s.trend_timeframe] ?? s.trend_timeframe}`;
+}
+
 function EntrySignalFields({
   value,
   onChange,
@@ -480,11 +492,15 @@ function EntrySignalFields({
           checked={!!value}
           onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_ENTRY_SIGNAL } : null)}
         />
-        Вход по сигналу MRC (15m, полоса 2)
+        {value?.type === 'supertrend'
+          ? `Вход по развороту ${signalName(value)}${trendLabel(value)}`
+          : 'Вход по сигналу MRC (15m, полоса 2)'}
       </label>
       {value && (
         <div className="flex items-center gap-2 mt-2 text-xs">
-          <span className="text-gray-400">Фильтр тренда EMA на дневке</span>
+          <span className="text-gray-400">
+            Фильтр тренда EMA на {TF_LABEL[value.trend_timeframe] ?? value.trend_timeframe}
+          </span>
           <input
             type="number"
             min={2}

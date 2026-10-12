@@ -4,6 +4,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+NO_TP_PERCENT = 100.0
+
 
 class PositionCalculator:
     """Pure position math — no DB, no exchange dependencies."""
@@ -53,9 +55,14 @@ class PositionCalculator:
 
     def tp_percent_for_order(self, order_number: int) -> Optional[float]:
         """DCA — тейк сразу и после каждого ордера (от новой средней);
-        пирамидинг — только после последнего ордера."""
+        пирамидинг — только после последнего ордера.
+        tp_percent >= 100 — тейка нет (выход по стопу/трейлингу): для шорта
+        это была бы цена ≤ 0, которую биржа отклонит вместе со стопом."""
+        tp = self.config.get("tp_percent")
+        if tp is None or tp >= NO_TP_PERCENT:
+            return None
         if self.is_dca() or order_number >= self.config["order_count"]:
-            return self.config.get("tp_percent")
+            return tp
         return None
 
     def take_profit_price(self, side: str) -> Optional[float]:
@@ -242,6 +249,21 @@ class PositionCalculator:
             if self.config.get("sl_breakeven_on_order2", True)
             else float(sl_initial)
         )
+
+    def exchange_sl_percent(self, side: str) -> Optional[float]:
+        """Стоп для биржи в % от средней цены текущих ордеров: + — в сторону
+        убытка, − — в сторону прибыли (брейкивен+). Считается из того же
+        calculate_stop_loss без трейлинга, что и стоп бэкенда: на 2-м ордере
+        стоп стоит от цены входа, а не от средней — процент от средней
+        это учитывает. Трейлинг бэкенд ведёт сам по тикам. None — стопа нет."""
+        if not self.orders:
+            return None
+        sl_price, _ = self.calculate_stop_loss(side, self.orders, self.orders[-1].price, trailing_enabled=False)
+        if not sl_price:
+            return None
+        avg = self.calculate_average_price(self.orders)
+        pct = (avg - sl_price) / avg * 100 if side == "LONG" else (sl_price - avg) / avg * 100
+        return round(pct, 4)
 
     def add_order(self, order: OrderInfo):
         self.orders.append(order)
