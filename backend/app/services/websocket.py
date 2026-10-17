@@ -181,8 +181,8 @@ class PriceStreamManager:
         self.strategy_engines[bot_id] = engine
         self.registered_bots.add(bot_id)
 
-        # Subscribe to price channel for this bot's exchange (default: bybit)
-        exchange = getattr(engine.bot, "exchange", "bybit") or "bybit"
+        # Subscribe to price channel for this bot's price feed
+        exchange = _price_feed(engine.bot)
         await self._subscribe_channel(exchange, engine.bot.symbol)
 
         # Tell price-tracker to start streaming this symbol
@@ -195,7 +195,7 @@ class PriceStreamManager:
         if engine:
             asyncio.create_task(engine.db.close())
             # Notify price-tracker to stop streaming if no other bot needs this symbol
-            exchange = getattr(engine.bot, "exchange", "bybit") or "bybit"
+            exchange = _price_feed(engine.bot)
             symbol = engine.bot.symbol
             still_needed = any(
                 e.bot.symbol == symbol
@@ -249,6 +249,14 @@ class PriceStreamManager:
     async def stop(self):
         if self._pubsub_task:
             self._pubsub_task.cancel()
+
+
+def _price_feed(bot) -> str:
+    """Биржа, с которой берём цену. bot.exchange — это площадка исполнения:
+    у Cryptorg своей ленты нет, а price-tracker знает только bybit,
+    поэтому всё, что не bybit, слушаем через bybit.
+    """
+    return "bybit"
 
 
 async def _notify_price_tracker(action: str, exchange: str, symbol: str):
