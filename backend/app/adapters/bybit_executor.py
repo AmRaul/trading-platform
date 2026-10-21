@@ -18,14 +18,33 @@ class BybitExecutorAdapter:
     fetch the real avgPrice via get_positions() and push SL/TP as a second
     call. Two API calls instead of one, but SL/TP end up computed from the
     actual fill price, not the pre-slippage entry estimate.
+
+    hedge=True — режим хеджа Bybit (positionIdx 1 — LONG, 2 — SHORT): LONG и
+    SHORT по одной монете живут одновременно (straddle-бот). По умолчанию —
+    односторонний режим (positionIdx 0), как у остальных ботов.
     """
 
     # symbol -> (qtyStep, minOrderQty, tickSize); биржевые параметры меняются редко
     _instruments: Dict[str, Tuple[Decimal, Decimal, Decimal]] = {}
 
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = False):
+    def __init__(self, api_key: str, api_secret: str, testnet: bool = False, hedge: bool = False):
         self._client = HTTP(api_key=api_key, api_secret=api_secret, testnet=testnet)
         self._testnet = testnet
+        self._hedge = hedge
+
+    def _idx(self, side: str) -> int:
+        if not self._hedge:
+            return 0
+        return 1 if side.lower() == "long" else 2
+
+    async def ensure_hedge_mode(self, symbol: str) -> Dict:
+        """Переключает монету в режим хеджа (нужен до открытия позиций)."""
+        resp = await self._run(lambda: self._client.switch_position_mode(category="linear", symbol=symbol, mode=3))
+        # 110025 — режим уже такой
+        if resp.get("retCode") in (0, 110025):
+            return {"success": True}
+        logger.error(f"[Bybit] switch_position_mode failed: {resp.get('retMsg')}")
+        return {"success": False, "error": resp.get("retMsg")}
 
     async def _instrument(self, symbol: str) -> Optional[Tuple[Decimal, Decimal, Decimal]]:
         key = f"{'test' if self._testnet else 'main'}:{symbol}"
@@ -69,15 +88,21 @@ class BybitExecutorAdapter:
     def _opposite_side(self, side: str) -> str:
         return "Sell" if side.lower() == "long" else "Buy"
 
-    async def _get_avg_price(self, symbol: str) -> Optional[float]:
+    async def _position_rows(self, symbol: str, side: Optional[str] = None) -> list:
+        """Строки позиций по монете; в режиме хеджа — только нужной стороны."""
         response = await self._run(
             lambda: self._client.get_positions(category="linear", symbol=symbol)
         )
         if response.get("retCode") != 0:
             logger.error(f"[Bybit] get_positions failed: {response.get('retMsg')}")
-            return None
+            return []
         rows = response.get("result", {}).get("list", [])
-        for row in rows:
+        if self._hedge and side:
+            rows = [r for r in rows if r.get("positionIdx") == self._idx(side)]
+        return rows
+
+    async def _get_avg_price(self, symbol: str, side: Optional[str] = None) -> Optional[float]:
+        for row in await self._position_rows(symbol, side):
             avg_price = row.get("avgPrice")
             if avg_price and float(avg_price) > 0:
                 return float(avg_price)
@@ -87,7 +112,7 @@ class BybitExecutorAdapter:
         self, symbol: str, side: str, avg_price: float, sl_percent: Optional[float], tp_percent: Optional[float]
     ) -> Dict:
         is_long = side.lower() == "long"
-        params: Dict = {"category": "linear", "symbol": symbol, "positionIdx": 0}
+        params: Dict = {"category": "linear", "symbol": symbol, "positionIdx": self._idx(side)}
 
         if sl_percent is not None:
             sl_price = avg_price * (1 - sl_percent / 100) if is_long else avg_price * (1 + sl_percent / 100)
@@ -135,6 +160,7 @@ class BybitExecutorAdapter:
                 orderType="Market",
                 qty=qty,
                 leverage=str(leverage),
+                positionIdx=self._idx(side),
             )
         )
         if order_result.get("retCode") != 0:
@@ -143,7 +169,7 @@ class BybitExecutorAdapter:
 
         order_id = order_result.get("result", {}).get("orderId")
 
-        avg_price = await self._get_avg_price(symbol)
+        avg_price = await self._get_avg_price(symbol, side)
         if avg_price:
             await self._push_stop_and_tp(symbol, side, avg_price, sl_percent, tp_percent)
         else:
@@ -168,6 +194,7 @@ class BybitExecutorAdapter:
                 side=self._side(side),
                 orderType="Market",
                 qty=qty,
+                positionIdx=self._idx(side),
             )
         )
         if order_result.get("retCode") != 0:
@@ -184,11 +211,7 @@ class BybitExecutorAdapter:
 
     async def close_position(self, symbol: str, side: str, quantity: Optional[float] = None) -> Dict:
         if quantity is None:
-            avg_price = await self._get_avg_price(symbol)
-            response = await self._run(
-                lambda: self._client.get_positions(category="linear", symbol=symbol)
-            )
-            rows = response.get("result", {}).get("list", []) if response.get("retCode") == 0 else []
+            rows = await self._position_rows(symbol, side)
             size = float(rows[0]["size"]) if rows and rows[0].get("size") else None
             if not size:
                 return {"success": False, "error": "No open position size found to close"}
@@ -204,6 +227,7 @@ class BybitExecutorAdapter:
                 orderType="Market",
                 qty=str(qty),
                 reduceOnly=True,
+                positionIdx=self._idx(side),
             )
         )
         if order_result.get("retCode") != 0:
@@ -233,7 +257,7 @@ class BybitExecutorAdapter:
         sl_percent: float,
         tp_percent: Optional[float] = None,
     ) -> Dict:
-        avg_price = await self._get_avg_price(symbol)
+        avg_price = await self._get_avg_price(symbol, side)
         if not avg_price:
             return {"success": False, "error": "No open position to update stop/tp for"}
         return await self._push_stop_and_tp(symbol, side, avg_price, sl_percent, tp_percent)

@@ -34,10 +34,13 @@ class BotState(str, Enum):
     ENTRY = "ENTRY"
     PYRAMIDING = "PYRAMIDING"
     EXIT = "EXIT"
+    STRADDLE = "STRADDLE"  # конструкция straddle запущена (см. StraddleRunner)
 
 
 class StrategyEngine:
     """Thin orchestrator — delegates all logic to use cases."""
+
+    straddle = None  # StraddleRunner для bot_type=straddle
 
     def __init__(self, bot_id: int, db: AsyncSession):
         self.bot_id = bot_id
@@ -79,6 +82,8 @@ class StrategyEngine:
                 api_key=decrypt(bybit_account.api_key),
                 api_secret=decrypt(bybit_account.api_secret),
                 testnet=bybit_account.testnet,
+                # straddle держит LONG и SHORT по монете одновременно
+                hedge=self.bot.config.get("bot_type") == "straddle",
             )
         else:
             # Load cryptorg account and build executor with the correct webhook URL
@@ -97,14 +102,20 @@ class StrategyEngine:
         self._add_order_uc = AddPyramidingOrderUseCase(executor, self._market, self._publisher)
         self._price_update_uc = HandlePriceUpdateUseCase(self._publisher)
 
+        self.calculator = PositionCalculator(self.bot.config)
+        self.current_state = BotState(self.bot.state)
+        if self.bot.config.get("bot_type") == "straddle":
+            # до двух открытых позиций (LONG и SHORT) — их ведёт StraddleRunner
+            from app.services.straddle_runner import StraddleRunner
+            self.straddle = StraddleRunner(self)
+            await self.straddle.load()
+            return
+
         result = await self.db.execute(
             select(Position).where(Position.bot_id == self.bot_id, Position.is_open == True)
         )
         self.position = result.scalar_one_or_none()
-
-        self.calculator = PositionCalculator(self.bot.config)
         await self._restore_state()
-        self.current_state = BotState(self.bot.state)
 
     async def _restore_state(self):
         if not self.position:
@@ -118,6 +129,8 @@ class StrategyEngine:
             self.calculator.add_order(OrderInfo(order.order_number, order.price, order.size))
 
     async def manual_entry(self, account_balance: float = None) -> Dict:
+        if self.straddle:
+            return await self.straddle.launch()
         if self.current_state != BotState.IDLE:
             return {"success": False, "error": "Bot not in IDLE state"}
         try:
@@ -135,6 +148,8 @@ class StrategyEngine:
             return {"success": False, "error": str(e)}
 
     async def set_limit_entry(self, limit_price: float) -> Dict:
+        if self.straddle:
+            return {"success": False, "error": "Straddle запускается только вручную"}
         if self.current_state != BotState.IDLE:
             return {"success": False, "error": "Bot not in IDLE state"}
         try:
@@ -158,6 +173,8 @@ class StrategyEngine:
             return {"success": False, "error": str(e)}
 
     async def arm_signal_entry(self) -> Dict:
+        if self.straddle:
+            return {"success": False, "error": "Straddle запускается только вручную"}
         if self.current_state != BotState.IDLE:
             return {"success": False, "error": "Bot not in IDLE state"}
         if not self.bot.config.get("entry_signal"):
@@ -232,6 +249,10 @@ class StrategyEngine:
             self._is_entering = False
 
     async def on_price_update(self, current_price: float):
+        if self.straddle:
+            await self.straddle.on_price(current_price)
+            return
+
         # Handle WAITING state — check if limit price is hit
         if self.current_state == BotState.WAITING:
             limit_price = self.bot.limit_entry_price
@@ -389,6 +410,8 @@ class StrategyEngine:
             self._is_closing = False
 
     async def manual_close(self) -> Dict:
+        if self.straddle:
+            return await self.straddle.manual_close()
         if self.bot.state == BotState.IDLE or not self.position or not self.position.is_open:
             return {"success": False, "error": "No open position"}
         try:

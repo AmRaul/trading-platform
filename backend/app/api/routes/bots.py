@@ -66,6 +66,11 @@ async def get_bots(
     last_order_prices = {bid: price for bid, price, _ in results}
     live_states = {bid: state for bid, _, state in results if state}
 
+    # Straddle может ждать хода без позиции — живое состояние конструкции берём из Redis отдельно
+    straddle_ids = [b.id for b in bots if b.state == "STRADDLE" and b.id not in live_states]
+    straddle_live = await _asyncio.gather(*[get_position_state(str(bid)) for bid in straddle_ids])
+    live_states.update({bid: st for bid, st in zip(straddle_ids, straddle_live) if st})
+
     # Assemble response with open_position
     response = []
     for bot in bots:
@@ -95,6 +100,7 @@ async def get_bots(
             account_id=bot.account_id,
             bybit_account_id=bot.bybit_account_id,
             limit_entry_price=bot.limit_entry_price,
+            straddle=live_states.get(bot.id, {}).get("straddle") or bot.runtime_state,
             created_at=bot.created_at,
             started_at=bot.started_at,
             open_position=open_position,

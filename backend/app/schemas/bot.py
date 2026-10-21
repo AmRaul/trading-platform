@@ -31,7 +31,7 @@ class EntrySignalConfig(BaseModel):
 class StrategyConfig(BaseModel):
     """Trading strategy configuration."""
 
-    bot_type: str = Field(default="pyramiding", pattern="^(pyramiding|dca)$")
+    bot_type: str = Field(default="pyramiding", pattern="^(pyramiding|dca|straddle)$")
 
     order_count: int = Field(default=4, ge=1, le=10)
     entry_size_usdt: float = Field(default=10.0, gt=0, le=10000)
@@ -61,6 +61,14 @@ class StrategyConfig(BaseModel):
 
     # None — вход вручную/по лимиту; иначе бот ждёт сигнал (state SIGNAL)
     entry_signal: Optional[EntrySignalConfig] = None
+
+    # Straddle (TODO/6): при запуске LONG и SHORT по entry_size_usdt; order_count,
+    # step_percent, pyramiding_multiplier, trailing, tp_percent (100 — без тейка), cycle —
+    # как у пирамидинга, для рабочей стороны. sl_* не используются.
+    phase2_after_steps: int = Field(default=3, ge=1, le=10)
+    add_stop_steps: float = Field(default=1.0, ge=0.1, le=3)
+    time_stop_minutes: Optional[int] = Field(default=240, ge=1, le=60 * 24 * 7)
+    max_rearms: int = Field(default=1, ge=0, le=10)
 
     @validator('entry_size_usdt')
     def validate_entry_size(cls, v):
@@ -105,7 +113,8 @@ class OpenPositionData(BaseModel):
 class BotCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     symbol: str = Field(min_length=1, max_length=20)
-    side: str = Field(pattern="^(LONG|SHORT)$")
+    # NEUTRAL — straddle (LONG и SHORT одновременно)
+    side: str = Field(pattern="^(LONG|SHORT|NEUTRAL)$")
     config: StrategyConfig
     exchange: str = Field(default="cryptorg", pattern="^(cryptorg|bybit)$")
     account_id: Optional[int] = None
@@ -128,17 +137,23 @@ class BotCreate(BaseModel):
 
     @validator('side')
     def validate_side(cls, v):
-        """Ensure side is LONG or SHORT"""
+        """Ensure side is LONG, SHORT or NEUTRAL"""
         v = v.upper()
-        if v not in ['LONG', 'SHORT']:
-            raise ValueError('Side must be either LONG or SHORT')
+        if v not in ['LONG', 'SHORT', 'NEUTRAL']:
+            raise ValueError('Side must be LONG, SHORT or NEUTRAL')
+        return v
+
+    @validator('config')
+    def validate_straddle_side(cls, v, values):
+        if (values.get('side') == 'NEUTRAL') != (v.bot_type == 'straddle'):
+            raise ValueError('straddle bots use side NEUTRAL, other bots — LONG or SHORT')
         return v
 
 
 class BotUpdate(BaseModel):
     name: Optional[str] = None
     symbol: Optional[str] = None
-    side: Optional[str] = Field(default=None, pattern="^(LONG|SHORT)$")
+    side: Optional[str] = Field(default=None, pattern="^(LONG|SHORT|NEUTRAL)$")
     config: Optional[StrategyConfig] = None
     is_active: Optional[bool] = None
     exchange: Optional[str] = Field(default=None, pattern="^(cryptorg|bybit)$")
@@ -159,6 +174,8 @@ class BotResponse(BaseModel):
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
     limit_entry_price: Optional[float] = None
+    # straddle: состояние конструкции + виртуальная пара (live из Redis, иначе из БД)
+    straddle: Optional[dict] = None
     created_at: datetime
     started_at: Optional[datetime]
     open_position: Optional[OpenPositionData] = None
