@@ -233,10 +233,16 @@ class PriceStreamManager:
                 )
                 waiting_bots = waiting_result.scalars().all()
 
-                active_bots = list(pyramiding_bots) + list(waiting_bots)
+                # Straddle может ждать хода без открытой позиции — состояние в Bot.runtime_state
+                straddle_result = await db.execute(
+                    select(Bot).where(Bot.state == "STRADDLE")
+                )
+                straddle_bots = straddle_result.scalars().all()
+
+                active_bots = list(pyramiding_bots) + list(waiting_bots) + list(straddle_bots)
                 logger.info(
                     f"[PriceStream] Restoring {len(pyramiding_bots)} pyramiding + "
-                    f"{len(waiting_bots)} waiting strategies"
+                    f"{len(waiting_bots)} waiting + {len(straddle_bots)} straddle strategies"
                 )
                 for bot in active_bots:
                     try:

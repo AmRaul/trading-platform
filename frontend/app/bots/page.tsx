@@ -38,6 +38,8 @@ export default function BotsPage() {
       if (bot.state !== 'IDLE' && bot.open_position) {
         setPosition(bot.id, bot.open_position);
         wsClient.subscribeToPrice(bot.symbol);
+      } else if (bot.state === 'STRADDLE') {
+        wsClient.subscribeToPrice(bot.symbol);
       }
     });
   }, [bots]);
@@ -182,9 +184,11 @@ export default function BotsPage() {
                   <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs font-medium ${
                     bot.config.bot_type === 'dca'
                       ? 'bg-orange-900 text-orange-300'
-                      : 'bg-blue-900 text-blue-300'
+                      : bot.config.bot_type === 'straddle'
+                        ? 'bg-purple-900 text-purple-300'
+                        : 'bg-blue-900 text-blue-300'
                   }`}>
-                    {bot.config.bot_type === 'dca' ? 'DCA' : 'Пир'}
+                    {bot.config.bot_type === 'dca' ? 'DCA' : bot.config.bot_type === 'straddle' ? 'Straddle' : 'Пир'}
                   </span>
                   <span className="font-semibold text-sm truncate">{bot.name}</span>
                 </div>
@@ -198,7 +202,9 @@ export default function BotsPage() {
               {/* Symbol / Side / Stats */}
               <div className="grid grid-cols-3 gap-x-2 text-xs text-gray-400 mb-2">
                 <span>{bot.symbol.replace('USDT', '')}</span>
-                <span className={bot.side === 'LONG' ? 'text-green-400' : 'text-red-400'}>{bot.side}</span>
+                <span className={bot.side === 'LONG' ? 'text-green-400' : bot.side === 'SHORT' ? 'text-red-400' : 'text-gray-300'}>
+                  {bot.side === 'NEUTRAL' ? 'LONG+SHORT' : bot.side}
+                </span>
                 <span className={`text-right ${bot.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   ${bot.total_pnl.toFixed(2)}
                 </span>
@@ -219,7 +225,17 @@ export default function BotsPage() {
                 <span>{bot.config.order_count} ord</span>
               </div>
 
-              {bot.state !== 'IDLE' && <PositionPanel bot={bot} />}
+              {bot.config.bot_type === 'straddle'
+                ? bot.state === 'STRADDLE'
+                  ? <StraddlePanel bot={bot} />
+                  : bot.straddle?.done && (
+                    <div className="text-xs text-gray-500 mb-1">
+                      Последний запуск: <span className={bot.straddle.realized >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        {bot.straddle.realized >= 0 ? '+' : ''}${bot.straddle.realized.toFixed(2)}
+                      </span> · {STRADDLE_REASON[bot.straddle.exit_reason] ?? bot.straddle.exit_reason}
+                    </div>
+                  )
+                : bot.state !== 'IDLE' && <PositionPanel bot={bot} />}
 
               {/* Actions */}
               <div className="flex gap-1.5 mt-2">
@@ -230,9 +246,9 @@ export default function BotsPage() {
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1 bg-green-700 hover:bg-green-600 rounded text-xs"
                     >
                       <Play size={12} />
-                      Войти
+                      {bot.config.bot_type === 'straddle' ? 'Запустить сейчас' : 'Войти'}
                     </button>
-                    {bot.config.entry_signal && (
+                    {bot.config.entry_signal && bot.config.bot_type !== 'straddle' && (
                       <button
                         onClick={() => signalMutation.mutate(bot.id)}
                         className="flex items-center justify-center gap-1 px-2 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs"
@@ -242,6 +258,7 @@ export default function BotsPage() {
                         Сигнал
                       </button>
                     )}
+                    {bot.config.bot_type !== 'straddle' && (
                     <button
                       onClick={() => { setLimitBot(bot); setLimitPrice(''); }}
                       className="flex items-center justify-center gap-1 px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs"
@@ -250,6 +267,7 @@ export default function BotsPage() {
                       <Clock size={12} />
                       Лимит
                     </button>
+                    )}
                   </>
                 ) : bot.state === 'SIGNAL' ? (
                   <>
@@ -518,6 +536,131 @@ function EntrySignalFields({
   );
 }
 
+const STRADDLE_DEFAULTS = {
+  phase2_after_steps: 3,
+  add_stop_steps: 1,
+  time_stop_minutes: 240 as number | null,
+  max_rearms: 1,
+};
+
+// Переключение формы на straddle: шаг/доборы/трейлинг — как в примере TODO/6
+function toStraddle<T extends Record<string, any>>(f: T): T {
+  return {
+    ...f, bot_type: 'straddle', side: 'NEUTRAL', order_count: 4, step_percent: 2,
+    pyramiding_multiplier: 1, use_trailing: true, trailing_percent: 5, tp_percent: 100,
+    entry_signal: null,
+  };
+}
+
+function StraddleFields({ value, onChange }: { value: any; onChange: (v: Record<string, any>) => void }) {
+  const num = (k: string, parse: (x: string) => number) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    onChange({ [k]: e.target.value === '' ? null : parse(e.target.value) });
+  const input = 'w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded';
+  return (
+    <>
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Фаза 2 через (шагов)</label>
+        <input type="number" value={value.phase2_after_steps} onChange={num('phase2_after_steps', parseInt)}
+          className={input} min="1" max="10" />
+        <p className="text-[11px] text-gray-500 mt-1">Закрыть минусовую сторону и вести весь ход трейлингом</p>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Стоп доборов (шагов от 1-го)</label>
+        <input type="number" value={value.add_stop_steps} onChange={num('add_stop_steps', parseFloat)}
+          className={input} step="0.5" min="0.5" max="3" />
+        <p className="text-[11px] text-gray-500 mt-1">1 — в точке запуска, 0.5 — полшага до неё, 1.5 — за ней</p>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Стоп по времени (мин)</label>
+        <input type="number" value={value.time_stop_minutes ?? ''} onChange={num('time_stop_minutes', parseInt)}
+          className={input} min="1" placeholder="без лимита" />
+        <p className="text-[11px] text-gray-500 mt-1">Нет фазы 2 за это время — закрыть всё</p>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Перевзводов после пилы</label>
+        <input type="number" value={value.max_rearms} onChange={num('max_rearms', parseInt)}
+          className={input} min="0" max="10" />
+        <p className="text-[11px] text-gray-500 mt-1">Сколько раз можно вернуться в точку запуска</p>
+      </div>
+    </>
+  );
+}
+
+const STRADDLE_REASON: Record<string, string> = {
+  TRAILING_STOP: 'трейлинг', TIME_STOP: 'стоп по времени', MAX_REARMS: 'лимит пил',
+  MANUAL_CLOSE: 'вручную', EXCHANGE_CLOSED: 'закрыта на бирже',
+};
+
+// PnL стороны — как leg_pnl в domain/trading/straddle.py (ордера в USDT по своей цене)
+function legPnl(orders: [number, number][], side: 'LONG' | 'SHORT', price: number) {
+  const d = side === 'LONG' ? 1 : -1;
+  return orders.reduce((a, [p, u]) => a + u * d * (price / p - 1), 0);
+}
+
+function StraddlePanel({ bot }: { bot: any }) {
+  const livePrice = usePriceStore((s) => s.prices[bot.symbol]);
+  const st = bot.straddle;
+  if (!st) return null;
+  const price = livePrice ?? st.price ?? st.anchor;
+  const pnl = {
+    LONG: legPnl(st.legs.LONG, 'LONG', price),
+    SHORT: legPnl(st.legs.SHORT, 'SHORT', price),
+  };
+  const total = st.realized + pnl.LONG + pnl.SHORT;
+  const money = (n: number) => `${n >= 0 ? '+' : ''}$${n.toFixed(2)}`;
+  const tone = (n: number) => (n >= 0 ? 'text-green-400' : 'text-red-400');
+  const phase = st.phase === 2
+    ? `${st.working} · фаза 2 (минусовая закрыта, трейлинг)`
+    : st.phase === 1
+      ? `${st.working} добирает · ордеров ${st.legs[st.working].length}/${bot.config.order_count}`
+      : st.reset_needed ? 'после пилы — жду возврата к точке' : 'пара открыта, жду хода';
+  const step = bot.config.step_percent / 100;
+  const leftMin = bot.config.time_stop_minutes && st.phase < 2
+    ? Math.max(0, Math.round(bot.config.time_stop_minutes - (Date.now() / 1000 - st.started_at) / 60))
+    : null;
+  const leg = (side: 'LONG' | 'SHORT') => (
+    <div>
+      <span className="text-gray-500">{side} </span>
+      {st.legs[side].length
+        ? <span className={tone(pnl[side])}>{money(pnl[side])} <span className="text-gray-500">×{st.legs[side].length}</span></span>
+        : <span className="text-gray-600">закрыт</span>}
+    </div>
+  );
+
+  return (
+    <div className="pt-2 border-t border-gray-700 mb-1 text-xs">
+      <div className="flex justify-between mb-1">
+        <span className="text-gray-500">Цена / точка</span>
+        <span className="font-medium">${price.toFixed(4)} / ${st.anchor.toFixed(4)}</span>
+      </div>
+      <div className="text-purple-300 mb-1">{phase}</div>
+      <div className="grid grid-cols-3 gap-x-2 mb-1">
+        {leg('LONG')}
+        {leg('SHORT')}
+        <div className="text-right"><span className="text-gray-500">Итог </span><span className={`font-semibold ${tone(total)}`}>{money(total)}</span></div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+        <div className="flex justify-between">
+          <span className="text-gray-500">Уровни</span>
+          <span>↑{(st.anchor * (1 + step)).toFixed(4)} ↓{(st.anchor * (1 - step)).toFixed(4)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Стоп {st.working ?? ''}</span>
+          <span className="text-red-400">{st.stop ? `$${st.stop.toFixed(4)}` : '—'}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Пилы</span>
+          <span>{st.rearms}/{bot.config.max_rearms}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-500">Стоп по врем.</span>
+          <span>{leftMin != null ? `${leftMin} мин` : '—'}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>(bot.exchange ?? 'cryptorg');
@@ -545,6 +688,10 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
     sl_breakeven_on_order2: bot.config.sl_breakeven_on_order2 ?? true,
     cycle: bot.config.cycle ?? false,
     entry_signal: bot.config.entry_signal ?? null,
+    phase2_after_steps: bot.config.phase2_after_steps ?? STRADDLE_DEFAULTS.phase2_after_steps,
+    add_stop_steps: bot.config.add_stop_steps ?? STRADDLE_DEFAULTS.add_stop_steps,
+    time_stop_minutes: bot.config.time_stop_minutes ?? STRADDLE_DEFAULTS.time_stop_minutes,
+    max_rearms: bot.config.max_rearms ?? STRADDLE_DEFAULTS.max_rearms,
   });
 
   const { data: accounts = [] } = useQuery<any[]>({
@@ -592,14 +739,19 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
           {/* Bot type toggle */}
           <div className="flex rounded overflow-hidden border border-gray-600">
             <button type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding' })}
+              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
               className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'pyramiding' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
               Пирамидинг
             </button>
             <button type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'dca' })}
+              onClick={() => setFormData({ ...formData, bot_type: 'dca', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
               className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'dca' ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
               DCA
+            </button>
+            <button type="button"
+              onClick={() => setFormData(toStraddle(formData))}
+              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'straddle' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+              Straddle
             </button>
           </div>
 
@@ -661,6 +813,12 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 </select>
               </div>
             )}
+            {formData.bot_type === 'straddle' ? (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
+              <div className="px-2 py-1.5 text-sm bg-gray-700/50 border border-gray-600 rounded text-gray-300">LONG + SHORT</div>
+            </div>
+            ) : (
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>
               <select value={formData.side}
@@ -670,6 +828,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                 <option value="SHORT">SHORT</option>
               </select>
             </div>
+            )}
             <div>
               <label className="block text-xs text-gray-400 mb-1">Плечо</label>
               <input type="number" value={formData.leverage}
@@ -684,20 +843,20 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : '(триггер ↑)'}
+                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : formData.bot_type === 'straddle' ? '(уровни от точки запуска)' : '(триггер ↑)'}
               </label>
               <input type="number" value={formData.step_percent}
                 onChange={(e) => setFormData({ ...formData, step_percent: parseFloat(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров (со входом)</label>
+              <label className="block text-xs text-gray-400 mb-1">{formData.bot_type === 'straddle' ? 'Ордеров рабочей стороны (со входом)' : 'Кол-во ордеров (со входом)'}</label>
               <input type="number" value={formData.order_count}
                 onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" max="10" />
             </div>
 
-            {formData.bot_type === 'pyramiding' ? (
+            {formData.bot_type !== 'dca' ? (
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Мультипликатор пир.</label>
                 <input type="number" value={formData.pyramiding_multiplier}
@@ -721,6 +880,10 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
               </>
             )}
 
+            {formData.bot_type === 'straddle' ? (
+              <StraddleFields value={formData} onChange={(v) => setFormData({ ...formData, ...v })} />
+            ) : (
+            <>
             <div>
               <label className="block text-xs text-gray-400 mb-1">
                 <span className="flex items-center gap-1.5">
@@ -738,8 +901,13 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
               </p>
             </div>
 
+            </>
+            )}
+
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Тейк-профит (%)</label>
+              <label className="block text-xs text-gray-400 mb-1">
+                Тейк-профит (%){formData.bot_type === 'straddle' ? ' · 100 — без тейка' : ''}
+              </label>
               <input type="number" value={formData.tp_percent}
                 onChange={(e) => setFormData({ ...formData, tp_percent: parseFloat(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="0.1" />
@@ -795,10 +963,12 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
               </div>
             )}
 
+            {formData.bot_type !== 'straddle' && (
             <EntrySignalFields
               value={formData.entry_signal}
               onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
             />
+            )}
           </div>
 
           <div className="flex gap-2 pt-2">
@@ -845,6 +1015,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
     sl_breakeven_on_order2: true,
     cycle: false,
     entry_signal: null as EntrySignal | null,
+    ...STRADDLE_DEFAULTS,
   });
 
   const { data: accounts = [] } = useQuery<any[]>({
@@ -896,7 +1067,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
           <div className="flex rounded overflow-hidden border border-gray-600">
             <button
               type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding' })}
+              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
               className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
                 formData.bot_type === 'pyramiding' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
               }`}
@@ -905,19 +1076,26 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
             </button>
             <button
               type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'dca' })}
+              onClick={() => setFormData({ ...formData, bot_type: 'dca', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
               className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
                 formData.bot_type === 'dca' ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
               }`}
             >
               DCA
             </button>
+            <button type="button"
+              onClick={() => setFormData(toStraddle(formData))}
+              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'straddle' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+              Straddle
+            </button>
           </div>
 
           <p className="text-xs text-gray-500">
             {formData.bot_type === 'pyramiding'
               ? 'Добавляет ордера когда цена идёт в нашу сторону.'
-              : 'Cryptorg ставит лимитки ниже рынка, усредняет позицию.'}
+              : formData.bot_type === 'straddle'
+                ? 'При запуске открывает LONG и SHORT. Сторона, куда пошла цена, добирает каждый шаг, вторая не добирает и страхует. Возврат к точке запуска — доборы закрываются; ушли на N шагов — минусовая закрывается, дальше трейлинг.'
+                : 'Cryptorg ставит лимитки ниже рынка, усредняет позицию.'}
           </p>
 
           <div className="grid grid-cols-2 gap-2">
@@ -982,6 +1160,12 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {formData.bot_type === 'straddle' ? (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
+              <div className="px-2 py-1.5 text-sm bg-gray-700/50 border border-gray-600 rounded text-gray-300">LONG + SHORT</div>
+            </div>
+            ) : (
             <div>
               <label className="block text-xs text-gray-400 mb-1">Сторона</label>
               <select value={formData.side}
@@ -991,6 +1175,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                 <option value="SHORT">SHORT</option>
               </select>
             </div>
+            )}
 
             <div>
               <label className="block text-xs text-gray-400 mb-1">Плечо</label>
@@ -1010,7 +1195,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
 
             <div>
               <label className="block text-xs text-gray-400 mb-1">
-                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : '(триггер ↑)'}
+                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : formData.bot_type === 'straddle' ? '(уровни от точки запуска)' : '(триггер ↑)'}
               </label>
               <input type="number" value={formData.step_percent}
                 onChange={(e) => setFormData({ ...formData, step_percent: parseFloat(e.target.value) })}
@@ -1018,14 +1203,14 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
             </div>
 
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Кол-во ордеров (со входом)</label>
+              <label className="block text-xs text-gray-400 mb-1">{formData.bot_type === 'straddle' ? 'Ордеров рабочей стороны (со входом)' : 'Кол-во ордеров (со входом)'}</label>
               <input type="number" value={formData.order_count}
                 onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
                 min="1" max="10" />
             </div>
 
-            {formData.bot_type === 'pyramiding' ? (
+            {formData.bot_type !== 'dca' ? (
               <div>
                 <label className="block text-xs text-gray-400 mb-1">Мультипликатор пир.</label>
                 <input type="number" value={formData.pyramiding_multiplier}
@@ -1052,6 +1237,10 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               </>
             )}
 
+            {formData.bot_type === 'straddle' ? (
+              <StraddleFields value={formData} onChange={(v) => setFormData({ ...formData, ...v })} />
+            ) : (
+            <>
             <div>
               <label className="block text-xs text-gray-400 mb-1">
                 <span className="flex items-center gap-1.5">
@@ -1069,8 +1258,13 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               </p>
             </div>
 
+            </>
+            )}
+
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Тейк-профит (%)</label>
+              <label className="block text-xs text-gray-400 mb-1">
+                Тейк-профит (%){formData.bot_type === 'straddle' ? ' · 100 — без тейка' : ''}
+              </label>
               <input type="number" value={formData.tp_percent}
                 onChange={(e) => setFormData({ ...formData, tp_percent: parseFloat(e.target.value) })}
                 className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
@@ -1129,10 +1323,12 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
 
+            {formData.bot_type !== 'straddle' && (
             <EntrySignalFields
               value={formData.entry_signal}
               onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
             />
+            )}
           </div>
 
           {errorMessage && (

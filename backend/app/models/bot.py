@@ -13,7 +13,7 @@ class Bot(Base):
     bybit_account_id = Column(Integer, ForeignKey("bybit_accounts.id"), nullable=True)
     name = Column(String, nullable=False)
     symbol = Column(String, nullable=False, index=True)  # e.g. BTCUSDT
-    side = Column(String, nullable=False)  # LONG or SHORT
+    side = Column(String, nullable=False)  # LONG or SHORT; straddle — NEUTRAL
 
     config = Column(JSON, nullable=False)
 
@@ -21,6 +21,8 @@ class Bot(Base):
     state = Column(String, default="IDLE")  # IDLE, WAITING, ENTRY, PYRAMIDING, EXIT
     is_active = Column(Boolean, default=False)
     limit_entry_price = Column(Float, nullable=True)
+    # Состояние конструкции straddle (StraddleState.to_dict) — переживает рестарт бэкенда
+    runtime_state = Column(JSON, nullable=True)
 
     # Stats
     total_pnl = Column(Float, default=0.0)

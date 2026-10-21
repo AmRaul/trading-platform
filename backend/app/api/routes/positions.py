@@ -149,6 +149,8 @@ async def set_position_trailing(
 
     bot_result = await db.execute(select(Bot).where(Bot.id == position.bot_id))
     bot = bot_result.scalar_one_or_none()
+    if bot and bot.config.get("bot_type") == "straddle":
+        raise HTTPException(status_code=400, detail="Трейлинг straddle-бота настраивается в конфиге бота")
 
     order_result = await db.execute(
         select(Order)

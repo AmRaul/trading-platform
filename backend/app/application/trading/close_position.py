@@ -35,10 +35,12 @@ class ClosePositionUseCase:
         )
 
         if send_to_exchange:
+            # quantity=None — закрыть всю позицию: total_size у нас в USDT, а Bybit
+            # ждёт количество в монетах (без него сам берёт размер позиции с биржи)
             close_result = await self.executor.close_position(
                 symbol=bot.symbol,
                 side=bot.side,
-                quantity=position.total_size,
+                quantity=None,
             )
             if not close_result or not close_result.get("success"):
                 logger.error("Failed to close position on exchange — closing locally anyway")
