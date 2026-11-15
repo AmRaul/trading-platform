@@ -13,7 +13,7 @@ pytest>=7.0.0
 pytest-cov>=4.0.0
 
 # PostgreSQL и ORM
-sqlalchemy>=2.0.0
+sqlalchemy>=2.0,<2.1  # 2.1 switched the default postgresql:// driver to psycopg3
 psycopg2-binary>=2.9.0
 alembic>=1.12.0
 
