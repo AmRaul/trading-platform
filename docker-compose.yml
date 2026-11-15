@@ -193,7 +193,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - FLASK_ENV=production
-      - DATABASE_URL=postgresql://${BACKTESTER_DB_USER:-backtester}:${BACKTESTER_DB_PASSWORD:-changeme}@backtester-postgres:5432/backtester
+      - DATABASE_URL=postgresql+psycopg2://${BACKTESTER_DB_USER:-backtester}:${BACKTESTER_DB_PASSWORD:-changeme}@backtester-postgres:5432/backtester
       - CORS_ALLOWED_ORIGINS=${BACKTESTER_CORS_ORIGINS:-http://localhost:3000}
     depends_on:
       backtester-postgres:
