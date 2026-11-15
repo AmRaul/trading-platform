@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -160,8 +161,9 @@ app = FastAPI(title="Signals Service", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://trading.hub-cargo.ru",
-        "http://localhost:3000",
+        o.strip()
+        for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+        if o.strip()
     ],
     allow_credentials=True,
     allow_methods=["*"],
