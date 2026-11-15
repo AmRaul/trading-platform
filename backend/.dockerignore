@@ -1,0 +1,15 @@
+# Keep the production image to app code only
+.git
+.env
+.env.*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+tests/
+pytest.ini
+*.log
+logs/
+.DS_Store
