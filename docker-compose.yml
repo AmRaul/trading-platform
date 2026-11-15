@@ -4,12 +4,13 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: trading_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-trading}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading123}
       POSTGRES_DB: ${POSTGRES_DB:-trading_db}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -47,10 +48,11 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/amraul/trading-platform-execution:latest}
     container_name: trading_backend
+    restart: unless-stopped
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     networks:
       - trading_network
     logging:
@@ -78,8 +80,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: trading_frontend
+    restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - trading_network
     logging:
@@ -116,6 +119,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${SIGNALS_DB_USER:-signals}:${SIGNALS_DB_PASSWORD:-signals123}@signals-db:5432/signals_db
       - BYBIT_TESTNET=${BYBIT_TESTNET:-false}
+      - CORS_ORIGINS=${SIGNALS_CORS_ORIGINS:-http://localhost:3000}
     networks:
       - trading_network
     logging:
@@ -155,7 +159,7 @@ services:
       POSTGRES_PASSWORD: ${BACKTESTER_DB_PASSWORD:-changeme}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - backtester_postgres_data:/var/lib/postgresql/data
       - ./services/backtester/init-db.sql:/docker-entrypoint-initdb.d/init.sql
@@ -173,13 +177,14 @@ services:
       start_period: 30s
 
   backtester-web:
+    image: ${BACKTESTER_IMAGE:-ghcr.io/amraul/trading-platform-backtester-web:latest}
     build:
       context: ./services/backtester
       dockerfile: Dockerfile.web
     container_name: backtester_web
     restart: unless-stopped
     ports:
-      - "8010:8000"
+      - "127.0.0.1:8010:8000"
     volumes:
       - ./services/backtester/data:/app/data
       - ./services/backtester/reports:/app/reports
@@ -240,7 +245,7 @@ services:
       - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/loki.yml:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_SERVER_ROOT_URL=https://logs.hub-cargo.ru
+      - GF_SERVER_ROOT_URL=https://logs.${DOMAIN:-localhost}
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_INSTALL_PLUGINS=grafana-lokiexplore-app
       - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-lokiexplore-app

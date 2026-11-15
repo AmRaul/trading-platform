@@ -40,11 +40,7 @@ Thumbs.db
 *.log
 logs/
 
-# Docker
-.dockerignore
-
 backend/.venv
-backend/tests
 backend/.pytest_cache
 
 # Internal docs (keep README.md public)
