@@ -102,7 +102,8 @@ def evaluate_supertrend_entry(
 
     direction = supertrend_direction(_frame(signal_candles), period, cfg.get("st_mult", 3.0))
     want = 1 if side == "LONG" else -1
-    flipped = direction[-1] == want and direction[-2] == -want
+    # bool(): иначе numpy.bool_ утекает в triggered → last_result → JSON bots-health (500)
+    flipped = bool(direction[-1] == want and direction[-2] == -want)
 
     trend = _trend_filter(side, trend_candles, cfg)
     if isinstance(trend, str):

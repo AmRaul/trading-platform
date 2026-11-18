@@ -96,3 +96,14 @@ def test_schema_accepts_supertrend():
     assert cfg.entry_signal.type == "supertrend" and cfg.entry_signal.trend_ema_fast == 50
     with pytest.raises(ValueError):
         EntrySignalConfig(**{**CFG, "type": "rsi"})
+
+
+def test_result_fields_are_plain_python():
+    """numpy.bool_ в triggered ронял /api/analytics/bots-health (FastAPI не сериализует)."""
+    import json
+    from dataclasses import asdict
+    s, t = _load("st_sol_15m.csv"), _load("st_sol_4h.csv")
+    for side in ("SHORT", "LONG"):  # сигнал и «разворота нет»
+        r = evaluate_supertrend_entry(side, s, t, CFG)
+        assert type(r.triggered) is bool and type(r.trend_ok) is bool
+        json.dumps(asdict(r))
