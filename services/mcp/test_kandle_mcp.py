@@ -111,3 +111,25 @@ def test_second_opinion_requires_checkable_verdict(fake_api):
 def test_monthly_review_prompt_carries_expectations():
     text = km.monthly_review("2026-11-18", "2026-12-18")
     assert "15.8%" in text and "$2 140" in text and 'until="2026-12-18"' in text
+
+
+def test_http_path_requires_long_token():
+    for bad in (None, "", "short", "x" * 31, "a" * 40 + "/../"):
+        with pytest.raises(SystemExit):
+            km.http_path(bad)
+    tok = "Ab3_-" + "z" * 40
+    assert km.http_path(tok) == f"/mcp/{tok}"
+
+
+def test_http_app_serves_only_secret_path():
+    from starlette.testclient import TestClient
+    tok = "t" * 43
+    app = km.mcp.streamable_http_app(streamable_http_path=km.http_path(tok), stateless_http=True, host="0.0.0.0")
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "t", "version": "1"}}}
+    headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+    with TestClient(app) as c:
+        assert c.post("/mcp", json=init, headers=headers).status_code == 404
+        assert c.post("/mcp/" + "x" * 43, json=init, headers=headers).status_code == 404
+        assert c.post(f"/mcp/{tok}", json=init, headers=headers).status_code == 200

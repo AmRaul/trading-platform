@@ -1,6 +1,6 @@
 # kandle-mcp
 
-MCP-сервер kandle для Claude Desktop и Claude Code. Запускается локально (stdio)
+MCP-сервер kandle для Claude: локально (stdio) — Claude Code / Desktop, удалённо (HTTP) — claude.ai и мобильное приложение. Локально запускается
 и ходит в REST API kandle с вашим логином — так же, как фронтенд. Базу и биржу
 напрямую не трогает, торговых действий нет: только чтение и запись в журнал разборов.
 
@@ -64,6 +64,24 @@ claude mcp add kandle --scope user \
 После правки — перезапустить Claude Desktop.
 
 Пароль хранится в локальном конфиге Claude на этом компьютере и уходит только на `KANDLE_URL`.
+
+### claude.ai и мобильное приложение (удалённый сервер)
+
+На сервере kandle-mcp работает контейнером `trading_kandle_mcp` (деплоится из `main` вместе
+с остальным стеком) и доступен по `https://kandle.tech/mcp/<KANDLE_MCP_TOKEN>`.
+Авторизация — секрет в пути: любой другой путь отдаёт 404, а nginx не пишет `/mcp/` в access-лог.
+
+1. GitHub → Settings → Secrets → Actions: `KANDLE_MCP_USERNAME`, `KANDLE_MCP_PASSWORD`,
+   `KANDLE_MCP_TOKEN` (`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`).
+2. Один раз на VPS добавить `location /mcp/` из `deploy/nginx/trading.conf.template`
+   в **443-блок** `/etc/nginx/sites-available/trading.conf` (шаблон рендерится только
+   в bootstrap, certbot потом правит живой конфиг), затем `nginx -t && systemctl reload nginx`.
+3. Деплой (merge в `main`).
+4. claude.ai → Settings → Connectors → Add custom connector →
+   URL `https://kandle.tech/mcp/<token>`, без OAuth. Коннектор появится и в мобильном приложении.
+
+URL коннектора = доступ к данным ботов и журналу разборов (торговать через него нельзя).
+Утёк — сменить `KANDLE_MCP_TOKEN` в секретах и передеплоить.
 
 ## Примеры
 

@@ -1,14 +1,20 @@
 """
-kandle-mcp — MCP-сервер kandle для Claude (Desktop / Code), транспорт stdio.
+kandle-mcp — MCP-сервер kandle для Claude.
+  stdio (по умолчанию)  — Claude Code / Claude Desktop на своём компьютере;
+  http                  — удалённый коннектор для claude.ai и мобильного приложения.
 
 Клиент REST API kandle с правами пользователя: ходит туда же, куда фронтенд,
 базу и биржу напрямую не трогает. Торговых действий нет — только чтение
 и запись в журнал разборов.
 
 Переменные окружения:
-    KANDLE_URL       — https://kandle.tech (по умолчанию) или http://localhost:8000
-    KANDLE_USERNAME  — логин kandle
-    KANDLE_PASSWORD  — пароль kandle
+    KANDLE_URL            — https://kandle.tech (по умолчанию) или http://backend:8000
+    KANDLE_USERNAME       — логин kandle
+    KANDLE_PASSWORD       — пароль kandle
+    KANDLE_MCP_TRANSPORT  — stdio | http
+    KANDLE_MCP_TOKEN      — только для http: секрет в пути, сервер отвечает лишь на
+                            /mcp/<token> (claude.ai-коннектор с этим URL и есть авторизация)
+    KANDLE_MCP_PORT       — только для http, по умолчанию 8030
 """
 import os
 from collections import defaultdict
@@ -344,8 +350,30 @@ def second_opinion(bot_id: int, my_thesis: str, would_act_if: str, timeframe: st
    "key_risk": "..."}})."""
 
 
+MIN_TOKEN_LEN = 32
+
+
+def http_path(token: Optional[str]) -> str:
+    """Путь удалённого MCP: секрет в URL. Короткий/пустой токен — отказ запускаться,
+    иначе сервер с данными ботов оказался бы открыт по угадываемому адресу."""
+    token = (token or "").strip()
+    if len(token) < MIN_TOKEN_LEN or not token.replace("-", "").replace("_", "").isalnum():
+        raise SystemExit(f"KANDLE_MCP_TOKEN: нужен случайный токен из [A-Za-z0-9_-], ≥{MIN_TOKEN_LEN} символов "
+                         "(например: python -c 'import secrets; print(secrets.token_urlsafe(32))')")
+    return f"/mcp/{token}"
+
+
 def main():
-    mcp.run()
+    if os.environ.get("KANDLE_MCP_TRANSPORT", "stdio") == "http":
+        mcp.run(
+            "streamable-http",
+            host="0.0.0.0",  # в контейнере; наружу порт проброшен только на 127.0.0.1, вход — через nginx
+            port=int(os.environ.get("KANDLE_MCP_PORT", "8030")),
+            streamable_http_path=http_path(os.environ.get("KANDLE_MCP_TOKEN")),
+            stateless_http=True,  # переживает рестарт контейнера без «потерянных сессий» у клиента
+        )
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

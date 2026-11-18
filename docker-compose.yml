@@ -92,6 +92,28 @@ services:
     depends_on:
       - backend
 
+  kandle-mcp:
+    # Удалённый MCP для claude.ai / мобильного Claude: ходит в backend по внутренней сети
+    # с логином пользователя; авторизация клиента — секрет в пути /mcp/<KANDLE_MCP_TOKEN>.
+    image: ${KANDLE_MCP_IMAGE:-ghcr.io/amraul/trading-platform-kandle-mcp:latest}
+    container_name: trading_kandle_mcp
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8030:8030"
+    environment:
+      - KANDLE_URL=http://backend:8000
+      - KANDLE_USERNAME=${KANDLE_MCP_USERNAME:-}
+      - KANDLE_PASSWORD=${KANDLE_MCP_PASSWORD:-}
+      - KANDLE_MCP_TOKEN=${KANDLE_MCP_TOKEN:-}
+    networks:
+      - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_kandle_mcp"
+    depends_on:
+      - backend
+
   signals-db:
     image: postgres:16-alpine
     container_name: trading_signals_db

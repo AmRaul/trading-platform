@@ -36,6 +36,9 @@ Secrets:
 | ENCRYPTION_KEY | Fernet key — **must be the same as on the old server**, otherwise stored Bybit API keys can't be decrypted |
 | ADMIN_USERNAME | admin login |
 | GRAFANA_PASSWORD | Grafana admin |
+| KANDLE_MCP_USERNAME | логин kandle, от имени которого удалённый MCP читает ботов |
+| KANDLE_MCP_PASSWORD | пароль этого логина |
+| KANDLE_MCP_TOKEN | секрет в URL коннектора claude.ai (`/mcp/<token>`), ≥32 символов: `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` |
 
 Generate passwords with `openssl rand -hex 24` (no `'` characters).
 When moving from the old server, reuse its DB/SECRET/ENCRYPTION values.
