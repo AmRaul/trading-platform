@@ -48,9 +48,22 @@ jobs:
       - run: pip install -r services/backtester/requirements.txt
       - run: cd services/backtester && pytest test_indicators.py -q
 
+  test-mcp:
+    name: Tests · kandle-mcp
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: services/mcp/requirements.txt
+      - run: pip install -r services/mcp/requirements.txt
+      - run: cd services/mcp && pytest -q
+
   build:
     name: Build · ${{ matrix.name }}
-    needs: [test-backend, test-backtester]
+    needs: [test-backend, test-backtester, test-mcp]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,6 +87,9 @@ jobs:
           - name: backtester-web
             context: ./services/backtester
             dockerfile: ./services/backtester/Dockerfile.web
+          - name: kandle-mcp
+            context: ./services/mcp
+            dockerfile: ./services/mcp/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -145,11 +161,14 @@ jobs:
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
+          KANDLE_MCP_USERNAME: ${{ secrets.KANDLE_MCP_USERNAME }}
+          KANDLE_MCP_PASSWORD: ${{ secrets.KANDLE_MCP_PASSWORD }}
+          KANDLE_MCP_TOKEN: ${{ secrets.KANDLE_MCP_TOKEN }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD
+          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD,KANDLE_MCP_USERNAME,KANDLE_MCP_PASSWORD,KANDLE_MCP_TOKEN
           script_stop: true
           script: |
             set -euo pipefail
@@ -185,6 +204,10 @@ jobs:
             SIGNALS_IMAGE='${IMAGE_PREFIX}-signals:${TAG}'
             PRICE_TRACKER_IMAGE='${IMAGE_PREFIX}-price-tracker:${TAG}'
             BACKTESTER_IMAGE='${IMAGE_PREFIX}-backtester-web:${TAG}'
+            KANDLE_MCP_IMAGE='${IMAGE_PREFIX}-kandle-mcp:${TAG}'
+            KANDLE_MCP_USERNAME='${KANDLE_MCP_USERNAME}'
+            KANDLE_MCP_PASSWORD='${KANDLE_MCP_PASSWORD}'
+            KANDLE_MCP_TOKEN='${KANDLE_MCP_TOKEN}'
             EOF
             sed -i 's/^[[:space:]]*//' .env
 
