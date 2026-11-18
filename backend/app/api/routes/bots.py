@@ -79,6 +79,7 @@ async def get_bots(
         if pos:
             live = live_states.get(bot.id, {})
             open_position = OpenPositionData(
+                id=pos.id,
                 average_price=pos.average_price,
                 current_sl=live.get("current_sl", pos.current_sl),
                 total_size=pos.total_size,
