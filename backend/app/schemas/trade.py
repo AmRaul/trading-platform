@@ -16,6 +16,7 @@ class TradeResponse(BaseModel):
     exit_reason: str
     pnl: float
     pnl_percent: float
+    fees: Optional[float] = None
     total_orders: int
     opened_at: datetime
     closed_at: datetime

@@ -76,7 +76,7 @@ class LaunchRequest(BaseModel):
     variant_key: str
     # Депозит под стратегию: размер первого ордера = deposit × % варианта
     deposit_usdt: float = Field(gt=0, le=10_000_000)  # общий на все боты стратегии
-    exchange: str = Field(default="bybit", pattern="^(cryptorg|bybit)$")
+    exchange: str = Field(default="bybit", pattern="^(cryptorg|bybit|paper)$")
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
 

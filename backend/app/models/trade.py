@@ -25,6 +25,9 @@ class Trade(Base):
     # Performance
     pnl = Column(Float, nullable=False)
     pnl_percent = Column(Float, nullable=False)
+    # Комиссии сделки в USDT, уже вычтены из pnl. Пишутся, когда исполнитель
+    # знает ставку (paper); у реальных бирж — NULL, pnl как раньше без комиссий.
+    fees = Column(Float, nullable=True)
 
     # Orders info
     total_orders = Column(Integer, nullable=False)

@@ -190,6 +190,9 @@ export default function BotsPage() {
                   }`}>
                     {bot.config.bot_type === 'dca' ? 'DCA' : bot.config.bot_type === 'straddle' ? 'Straddle' : 'Пир'}
                   </span>
+                  {bot.exchange === 'paper' && (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900 text-amber-300">Бумажный</span>
+                  )}
                   <span className="font-semibold text-sm truncate">{bot.name}</span>
                 </div>
                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs ${
@@ -663,7 +666,7 @@ function StraddlePanel({ bot }: { bot: any }) {
 
 function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>(bot.exchange ?? 'cryptorg');
+  const [exchange, setExchange] = useState<'cryptorg' | 'bybit' | 'paper'>(bot.exchange ?? 'cryptorg');
   const [accountId, setAccountId] = useState<number | null>(bot.account_id ?? null);
   const [bybitAccountId, setBybitAccountId] = useState<number | null>(bot.bybit_account_id ?? null);
   const [formData, setFormData] = useState({
@@ -781,6 +784,11 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                   className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
                   Bybit
                 </button>
+                <button type="button"
+                  onClick={() => setExchange('paper')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'paper' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Бумажный
+                </button>
               </div>
             </div>
             {exchange === 'cryptorg' ? (
@@ -797,7 +805,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                   ))}
                 </select>
               </div>
-            ) : (
+            ) : exchange === 'bybit' ? (
               <div className="col-span-2">
                 <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
                 <select
@@ -812,6 +820,10 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
                   ))}
                 </select>
               </div>
+            ) : (
+              <p className="col-span-2 text-xs text-gray-400">
+                Бумажный режим: ордера не уходят на биржу, исполнение по живой цене Bybit, комиссия 0.055% вычитается из PnL.
+              </p>
             )}
             {formData.bot_type === 'straddle' ? (
             <div>
@@ -990,7 +1002,7 @@ function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
 
 function CreateBotModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [exchange, setExchange] = useState<'cryptorg' | 'bybit'>('cryptorg');
+  const [exchange, setExchange] = useState<'cryptorg' | 'bybit' | 'paper'>('cryptorg');
   const [accountId, setAccountId] = useState<number | null>(null);
   const [bybitAccountId, setBybitAccountId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
@@ -1126,6 +1138,11 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                   className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
                   Bybit
                 </button>
+                <button type="button"
+                  onClick={() => setExchange('paper')}
+                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'paper' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
+                  Бумажный
+                </button>
               </div>
             </div>
 
@@ -1143,7 +1160,7 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                   ))}
                 </select>
               </div>
-            ) : (
+            ) : exchange === 'bybit' ? (
               <div className="col-span-2">
                 <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
                 <select
@@ -1158,6 +1175,10 @@ function CreateBotModal({ onClose }: { onClose: () => void }) {
                   ))}
                 </select>
               </div>
+            ) : (
+              <p className="col-span-2 text-xs text-gray-400">
+                Бумажный режим: ордера не уходят на биржу, исполнение по живой цене Bybit, комиссия 0.055% вычитается из PnL.
+              </p>
             )}
 
             {formData.bot_type === 'straddle' ? (

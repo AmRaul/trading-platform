@@ -50,6 +50,14 @@ class ClosePositionUseCase:
         )
         pnl_percent = calculator.calculate_pnl_percent(bot.side, position.average_price, exit_price)
 
+        # Исполнитель со ставкой комиссии (paper) — PnL сделки сразу за вычетом
+        # комиссий: вход и доборы на total_size, выход — на тот же объём по цене выхода
+        fees = None
+        fee_rate = getattr(self.executor, "fee_rate", None)
+        if isinstance(fee_rate, (int, float)) and fee_rate > 0:
+            fees = fee_rate * position.total_size * (1 + exit_price / position.average_price)
+            pnl -= fees
+
         first_order = calculator.orders[0]
         trade = Trade(
             bot_id=bot.id,
@@ -63,6 +71,7 @@ class ClosePositionUseCase:
             exit_reason=exit_reason,
             pnl=pnl,
             pnl_percent=pnl_percent,
+            fees=fees,
             total_orders=position.order_count,
             opened_at=position.opened_at,
         )
@@ -114,6 +123,7 @@ class ClosePositionUseCase:
             "exit_reason": exit_reason,
             "pnl": pnl,
             "pnl_percent": pnl_percent,
+            "fees": fees,
             "total_orders": total_orders,
             "entry_price": first_order.price,
             "average_price": avg_price,
