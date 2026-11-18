@@ -30,9 +30,17 @@ class SignalEntryScheduler:
         self._check = CheckEntrySignalUseCase(BybitMarketDataAdapter())
         # bot_id -> timestamp закрытия последней проверенной свечи
         self._last_checked: Dict[int, int] = {}
+        # bot_id -> {checked_at_ms, reason, triggered} — для проверки «жив ли бот» (bots-health)
+        self.last_result: Dict[int, dict] = {}
+        self.started_ms: int | None = None
+
+    @property
+    def running(self) -> bool:
+        return bool(self._task and not self._task.done())
 
     def start(self):
         if not self._task or self._task.done():
+            self.started_ms = int(time.time() * 1000)
             self._task = asyncio.create_task(self._loop())
 
     async def stop(self):
@@ -74,6 +82,10 @@ class SignalEntryScheduler:
             if key not in cache:
                 cache[key] = await self._check.execute(bot.symbol, bot.side, cfg, now_ms)
             signal = cache[key]
+            self.last_result[bot.id] = {
+                "checked_at_ms": now_ms, "reason": signal.reason, "triggered": signal.triggered,
+                "risk_zone": signal.risk_zone, "trend_ok": signal.trend_ok,
+            }
 
             logger.info(
                 f"[SignalScheduler] bot={bot.id} {bot.symbol} {bot.side} "

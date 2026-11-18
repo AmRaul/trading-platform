@@ -98,6 +98,7 @@ class StrategyConfig(BaseModel):
 
 
 class OpenPositionData(BaseModel):
+    id: Optional[int] = None
     average_price: Optional[float] = None
     current_sl: Optional[float] = None
     total_size: float

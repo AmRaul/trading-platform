@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.redis import init_redis, close_redis
-from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin, ready_strategies
+from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin, ready_strategies, analytics
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +75,7 @@ app.include_router(accounts.router, prefix="/api/accounts", tags=["accounts"])
 app.include_router(bybit_accounts.router, prefix="/api/bybit-accounts", tags=["bybit-accounts"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(ready_strategies.router, prefix="/api/ready-strategies", tags=["ready-strategies"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 
 
 @app.get("/")
