@@ -116,7 +116,7 @@ class BotCreate(BaseModel):
     # NEUTRAL — straddle (LONG и SHORT одновременно)
     side: str = Field(pattern="^(LONG|SHORT|NEUTRAL)$")
     config: StrategyConfig
-    exchange: str = Field(default="cryptorg", pattern="^(cryptorg|bybit)$")
+    exchange: str = Field(default="cryptorg", pattern="^(cryptorg|bybit|paper)$")
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
 
@@ -156,7 +156,7 @@ class BotUpdate(BaseModel):
     side: Optional[str] = Field(default=None, pattern="^(LONG|SHORT|NEUTRAL)$")
     config: Optional[StrategyConfig] = None
     is_active: Optional[bool] = None
-    exchange: Optional[str] = Field(default=None, pattern="^(cryptorg|bybit)$")
+    exchange: Optional[str] = Field(default=None, pattern="^(cryptorg|bybit|paper)$")
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
 

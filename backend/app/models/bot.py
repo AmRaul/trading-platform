@@ -8,7 +8,7 @@ class Bot(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    exchange = Column(String, default="cryptorg", nullable=False)  # cryptorg | bybit
+    exchange = Column(String, default="cryptorg", nullable=False)  # cryptorg | bybit | paper (бумажная торговля)
     account_id = Column(Integer, ForeignKey("cryptorg_accounts.id"), nullable=True)
     bybit_account_id = Column(Integer, ForeignKey("bybit_accounts.id"), nullable=True)
     name = Column(String, nullable=False)

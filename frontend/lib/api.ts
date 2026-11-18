@@ -117,7 +117,7 @@ export const readyStrategiesApi = {
   launch: (slug: string, data: {
     variant_key: string;
     deposit_usdt: number;
-    exchange: 'cryptorg' | 'bybit';
+    exchange: 'cryptorg' | 'bybit' | 'paper';
     account_id?: number | null;
     bybit_account_id?: number | null;
   }) => api.post(`/api/ready-strategies/${slug}/launch`, data),

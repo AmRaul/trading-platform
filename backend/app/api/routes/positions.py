@@ -5,13 +5,11 @@ from typing import List, Sequence
 from app.core.database import get_db
 from app.core.redis import get_position_state
 from app.models import User, Bot, Position, Order
-from app.models.cryptorg_account import CryptorgAccount
 from app.schemas.position import PositionResponse, PositionManagedUpdate, PositionTrailingUpdate
 from app.api.deps import get_current_user
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
-from app.adapters.cryptorg_executor import CryptorgExecutorAdapter
-from app.services.cryptorg import get_cryptorg_client
+from app.adapters.executor_factory import build_executor
 import logging
 
 logger = logging.getLogger(__name__)
@@ -181,13 +179,7 @@ async def set_position_trailing(
         # unconditionally here would wrongly clear an already-active TP.
         tp_pct = calculator.tp_percent_for_order(position.order_count)
 
-        account = None
-        if bot.account_id:
-            acc_result = await db.execute(
-                select(CryptorgAccount).where(CryptorgAccount.id == bot.account_id)
-            )
-            account = acc_result.scalar_one_or_none()
-        executor = CryptorgExecutorAdapter(get_cryptorg_client(account))
+        executor = await build_executor(bot, db)
         update_result = await executor.update_stop_and_tp(
             symbol=bot.symbol,
             side=bot.side.lower(),

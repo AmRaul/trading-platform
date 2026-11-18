@@ -53,7 +53,7 @@ const signed = (v: number) => `${v >= 0 ? '+' : ''}${v}%`;
 function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: any; onClose: () => void }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [exchange, setExchange] = useState<'bybit' | 'cryptorg'>('bybit');
+  const [exchange, setExchange] = useState<'bybit' | 'cryptorg' | 'paper'>('bybit');
   const [accountId, setAccountId] = useState<number | null>(null);
   const [deposit, setDeposit] = useState('');
 
@@ -66,6 +66,8 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
     queryFn: async () => (await accountsApi.getAll()).data,
   });
   const accounts = exchange === 'bybit' ? bybitAccounts : cryptorgAccounts;
+  // Бумажный режим: сделки виртуальные по живым ценам Bybit, аккаунт не нужен
+  const isPaper = exchange === 'paper';
 
   const preset = variant.bot_preset;
   const legs: string[] = strategy.symbols;
@@ -95,7 +97,7 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
   });
   const error = (launch.error as any)?.response?.data?.detail;
 
-  const canLaunch = depositNum > 0 && firstOrder >= 10 && accountId !== null && !launch.isPending;
+  const canLaunch = depositNum > 0 && firstOrder >= 10 && (isPaper || accountId !== null) && !launch.isPending;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
@@ -114,19 +116,25 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
           <div>
             <label className="block text-xs text-gray-400 mb-1">Биржа</label>
             <div className="flex rounded overflow-hidden border border-gray-600">
-              {(['bybit', 'cryptorg'] as const).map((ex) => (
+              {(['bybit', 'cryptorg', 'paper'] as const).map((ex) => (
                 <button
                   key={ex}
                   type="button"
                   onClick={() => { setExchange(ex); setAccountId(null); }}
                   className={`flex-1 py-1.5 text-sm ${exchange === ex ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
                 >
-                  {ex === 'bybit' ? 'Bybit' : 'Cryptorg'}
+                  {ex === 'bybit' ? 'Bybit' : ex === 'cryptorg' ? 'Cryptorg' : 'Бумажный'}
                 </button>
               ))}
             </div>
           </div>
 
+          {isPaper ? (
+            <p className="text-sm text-gray-400">
+              Форвард-тест без денег: ордера не уходят на биржу, вход и выход — по живой цене Bybit,
+              комиссия 0.055% за исполнение вычитается из PnL сделки.
+            </p>
+          ) : (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Аккаунт</label>
             {accounts.length === 0 ? (
@@ -149,6 +157,7 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
               </select>
             )}
           </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-400 mb-1">Депозит под стратегию, USDT</label>
