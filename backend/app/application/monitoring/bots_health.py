@@ -2,7 +2,8 @@
 Проверка «живы ли боты» для пользователя (MCP bots_health): по каждому боту —
 в каком он состоянии и получает ли то, что ему нужно для работы:
   SIGNAL              — планировщик сигналов жив и проверял бота на последних свечах;
-  WAITING/PYRAMIDING  — бот подписан на поток цен (иначе не увидит стоп/добор);
+  WAITING/PYRAMIDING  — бот подписан на поток цен и тики по его монете реально приходят
+                        (иначе не увидит стоп/добор);
   PYRAMIDING          — у бота есть открытая позиция;
   IDLE                — если бот циклический с входом по сигналу, IDLE значит,
                         что он выпал из цикла и сам больше не войдёт.
@@ -13,6 +14,8 @@ from app.application.signals.check_entry_signal import INTERVAL_MS
 
 # Запас на задержку закрытия свечи (CLOSE_DELAY_SEC) и на сам тик планировщика
 GRACE_MS = 3 * 60_000
+# Bybit шлёт тикер много раз в минуту; 5 минут тишины — поток цен по монете встал
+TICK_STALE_MS = 5 * 60_000
 
 
 def assess_bot(
@@ -25,6 +28,7 @@ def assess_bot(
     scheduler_started_ms: Optional[int],
     last_check: Optional[Dict],
     now_ms: int,
+    last_tick_ms: Optional[int] = None,
 ) -> Dict:
     issues, notes = [], []
     entry_signal = (config or {}).get("entry_signal")
@@ -51,6 +55,16 @@ def assess_bot(
     elif state in ("WAITING", "PYRAMIDING", "STRADDLE"):
         if not registered_for_prices:
             issues.append("не подписан на поток цен — стоп, добор и тейк не отслеживаются")
+        elif last_tick_ms is None:
+            uptime = now_ms - scheduler_started_ms if scheduler_started_ms else None
+            if uptime is not None and uptime < GRACE_MS:
+                notes.append("бэкенд недавно перезапущен, тики цены ещё не пришли")
+            else:
+                issues.append("тики цены по монете не приходили с запуска бэкенда — стоп и добор не отслеживаются")
+        elif now_ms - last_tick_ms > TICK_STALE_MS:
+            issues.append(f"последний тик цены {(now_ms - last_tick_ms) // 60_000} мин назад — поток цен встал")
+        else:
+            notes.append(f"цена получена {(now_ms - last_tick_ms) // 1000} с назад")
         if state == "PYRAMIDING" and not has_open_position:
             issues.append("в состоянии PYRAMIDING без открытой позиции")
 

@@ -8,12 +8,13 @@ MCP-сервер kandle для Claude: локально (stdio) — Claude Code 
 
 | Инструмент | Что даёт |
 |---|---|
-| `bots_health` | живы ли боты: сигналы проверяются, цены идут, никто не выпал из цикла |
+| `bots_health` | живы ли боты: сигналы проверяются, тики цены приходят, никто не выпал из цикла |
 | `list_bots` | боты с настройками и открытой позицией (фильтр `exchange=paper`) |
 | `get_trades` | закрытые сделки за период |
 | `portfolio_summary` | итоги по стратегиям: PnL, комиссии, win rate, полные сетки, просадка |
 | `get_market_context` | свечи + EMA 20/50/200, RSI, ATR, Bollinger, режим, funding/OI |
 | `get_position_context` | позиция бота + контекст + расстояния до стопа/добора/тейка в ATR |
+| `reconcile_position` | сверка позиции с бэктестом на тех же свечах: сигнал входа, доборы, выход |
 | `log_review`, `list_reviews` | журнал разборов (вердикты второго мнения с исходом сделки) |
 
 Готовые сценарии (prompts): `health_check`, `monthly_review`, `second_opinion`.
@@ -24,7 +25,7 @@ MCP-сервер kandle для Claude: локально (stdio) — Claude Code 
 cd services/mcp
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest -q          # 6 тестов, без сети
+.venv/bin/python -m pytest -q          # без сети
 ```
 
 ## Подключение

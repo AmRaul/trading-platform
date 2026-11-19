@@ -42,6 +42,11 @@ class FakeAPI:
             return BOTS
         if path == "/api/analytics/trades":
             return TRADES
+        if path.startswith("/api/analytics/reconcile/"):
+            return {"position_id": int(path.rsplit("/", 1)[1]), "verdict": "match",
+                    "entry_signal": {"signal_candle_close_ms": 1795000500000, "triggered": True},
+                    "orders": [{"number": 1, "live_price": 9.123, "replay_price": 9.123,
+                                "live_time_ms": 1795000506000, "replay_time_ms": 1795000506000}]}
         if path == "/api/analytics/market-context":
             return {**CTX, "symbol": params["symbol"]}
         raise AssertionError(path)
@@ -65,7 +70,7 @@ def run(coro):
 def test_server_registers_tools_and_prompts():
     tools = {t.name for t in run(km.mcp.list_tools())}
     assert tools == {"bots_health", "list_bots", "get_trades", "portfolio_summary", "get_market_context",
-                     "get_position_context", "log_review", "list_reviews"}
+                     "get_position_context", "reconcile_position", "log_review", "list_reviews"}
     prompts = {p.name for p in run(km.mcp.list_prompts())}
     assert prompts == {"health_check", "monthly_review", "second_opinion"}
 
@@ -133,3 +138,10 @@ def test_http_app_serves_only_secret_path():
         assert c.post("/mcp", json=init, headers=headers).status_code == 404
         assert c.post("/mcp/" + "x" * 43, json=init, headers=headers).status_code == 404
         assert c.post(f"/mcp/{tok}", json=init, headers=headers).status_code == 200
+
+
+def test_reconcile_position_formats_times():
+    r = run(km.reconcile_position(1))
+    assert r["verdict"] == "match"
+    assert r["entry_signal"]["signal_candle_close"] == "2026-11-18 11:15:00"
+    assert r["orders"][0]["live_time"] == "2026-11-18 11:15:06" and "live_time_ms" not in r["orders"][0]
