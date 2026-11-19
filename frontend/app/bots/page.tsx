@@ -2,86 +2,29 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { botsApi, tradingApi, accountsApi, bybitAccountsApi } from '@/lib/api';
+import { botsApi, tradingApi, accountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
-
-type ExchangeTab = 'all' | 'paper' | 'bybit' | 'cryptorg';
-
-const EXCHANGE_TABS: { key: ExchangeTab; label: string }[] = [
-  { key: 'all', label: 'Все' },
-  { key: 'paper', label: 'Бумажные' },
-  { key: 'bybit', label: 'Bybit' },
-  { key: 'cryptorg', label: 'Cryptorg' },
-];
-
-const TAB_STORAGE_KEY = 'bots-exchange-tab';
-
-// Старые боты без exchange — Cryptorg (как и дефолт в форме редактирования)
-const botExchange = (bot: any): ExchangeTab => bot.exchange ?? 'cryptorg';
-
-const COLLAPSED_STORAGE_KEY = 'bots-collapsed-groups';
-const OTHER_GROUP = 'Отдельные боты';
-
-type BotGroup = { key: string; bots: any[] };
-
-// «Шорт альтов · … · Консервативный · SOLUSDT» → «Шорт альтов · … · Консервативный»
-const strategyOf = (bot: any): string => {
-  const suffix = ` · ${bot.symbol}`;
-  return bot.name.endsWith(suffix) ? bot.name.slice(0, -suffix.length) : bot.name;
-};
-
-// Боты одной стратегии — вместе; одиночные ручные боты (имя без « · ») — в «Отдельные боты», в конце
-function groupBots(list: any[]): BotGroup[] {
-  const byKey = new Map<string, any[]>();
-  for (const bot of list) {
-    let key = strategyOf(bot);
-    if (!key.includes(' · ') && list.filter((b) => strategyOf(b) === key).length < 2) key = OTHER_GROUP;
-    byKey.set(key, [...(byKey.get(key) ?? []), bot]);
-  }
-  const groups = Array.from(byKey, ([key, bots]) => ({ key, bots }));
-  return [...groups.filter((g) => g.key !== OTHER_GROUP), ...groups.filter((g) => g.key === OTHER_GROUP)];
-}
-
-// Внутри группы длинное имя стратегии не повторяем — в карточке только монета
-function cardTitle(bot: any, group: BotGroup): string {
-  if (group.key === OTHER_GROUP) return bot.name;
-  return bot.name === group.key ? bot.symbol : bot.name.slice(group.key.length + 3);
-}
-
-const money = (n: number) => `${n >= 0 ? '+' : '−'}$${Math.abs(n).toFixed(2)}`;
-
-function GroupHeader({ group, collapsed, onToggle }: { group: BotGroup; collapsed: boolean; onToggle: () => void }) {
-  const open = group.bots.filter((b) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
-  const realized = group.bots.reduce((sum, b) => sum + (b.total_pnl ?? 0), 0);
-  const unrealized = group.bots.reduce((sum, b) => sum + (b.open_position?.unrealized_pnl ?? 0), 0);
-  const tone = (n: number) => (n >= 0 ? 'text-green-400' : 'text-red-400');
-  return (
-    <button onClick={onToggle} className="w-full flex items-center gap-2 mb-2 text-left">
-      {collapsed ? <ChevronRight size={16} className="shrink-0 text-gray-500" /> : <ChevronDown size={16} className="shrink-0 text-gray-500" />}
-      <span className="font-semibold text-sm text-gray-200 truncate">{group.key}</span>
-      <span className="shrink-0 px-1.5 rounded text-xs bg-gray-800 text-gray-400">{group.bots.length}</span>
-      {open > 0 && <span className="shrink-0 text-xs text-green-400" title="В позиции">● {open}</span>}
-      <span className="flex-1 border-t border-gray-800 mx-1" />
-      {open > 0 && (
-        <span className={`shrink-0 text-xs ${tone(unrealized)}`} title="Текущий PnL открытых позиций">
-          {money(unrealized)} откр.
-        </span>
-      )}
-      <span className={`shrink-0 text-xs font-medium ${tone(realized)}`} title="Реализованный PnL">
-        {money(realized)}
-      </span>
-    </button>
-  );
-}
+import type {
+  Bot, BotEvent, CryptorgAccount, PriceUpdateEvent, PyramidingOrderEvent, TrailingStopEvent,
+} from '@/lib/types';
+import {
+  EXCHANGE_TABS, TAB_STORAGE_KEY, COLLAPSED_STORAGE_KEY, botExchange, cardTitle, groupBots, type ExchangeTab,
+} from './_components/grouping';
+import GroupHeader from './_components/GroupHeader';
+import PositionPanel from './_components/PositionPanel';
+import StraddlePanel, { STRADDLE_REASON } from './_components/StraddlePanel';
+import { signalName, trendLabel } from './_components/EntrySignalFields';
+import EditBotModal from './_components/EditBotModal';
+import CreateBotModal from './_components/CreateBotModal';
 
 export default function BotsPage() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editBot, setEditBot] = useState<any>(null);
-  const [limitBot, setLimitBot] = useState<any>(null);
+  const [editBot, setEditBot] = useState<Bot | null>(null);
+  const [limitBot, setLimitBot] = useState<Bot | null>(null);
   const [limitPrice, setLimitPrice] = useState('');
   const { setPosition, updatePositionFields, clearPosition } = usePositionStore();
   const updatePrice = usePriceStore((s) => s.updatePrice);
@@ -92,18 +35,18 @@ export default function BotsPage() {
     refetchInterval: 5000,
   });
 
-  const { data: accounts = [] } = useQuery<any[]>({
+  const { data: accounts = [] } = useQuery<CryptorgAccount[]>({
     queryKey: ['accounts'],
     queryFn: async () => (await accountsApi.getAll()).data,
   });
 
   const accountName = (id: number | null) =>
-    id ? (accounts.find((a: any) => a.id === id)?.name ?? `#${id}`) : null;
+    id ? (accounts.find((a) => a.id === id)?.name ?? `#${id}`) : null;
 
   // Seed position store from REST response and subscribe to WS
   useEffect(() => {
     if (!bots) return;
-    bots.forEach((bot: any) => {
+    bots.forEach((bot) => {
       if (bot.state !== 'IDLE' && bot.open_position) {
         setPosition(bot.id, bot.open_position);
         wsClient.subscribeToPrice(bot.symbol);
@@ -115,7 +58,7 @@ export default function BotsPage() {
 
   // Subscribe to trading WS events
   useEffect(() => {
-    const unsubPyramiding = wsClient.subscribe('pyramiding_order_added', (data: any) => {
+    const unsubPyramiding = wsClient.subscribe('pyramiding_order_added', (data: PyramidingOrderEvent) => {
       updatePositionFields(data.bot_id, {
         average_price: data.new_average_price,
         current_sl: data.new_sl,
@@ -126,7 +69,7 @@ export default function BotsPage() {
       });
     });
 
-    const unsubTrailing = wsClient.subscribe('trailing_stop_moved', (data: any) => {
+    const unsubTrailing = wsClient.subscribe('trailing_stop_moved', (data: TrailingStopEvent) => {
       updatePositionFields(data.bot_id, {
         current_sl: data.new_sl,
         unrealized_pnl: data.unrealized_pnl,
@@ -136,9 +79,9 @@ export default function BotsPage() {
     const handlePositionClosed = (bot_id: number) => {
       clearPosition(bot_id);
       // Optimistically set bot state to IDLE in cache so UI updates immediately
-      queryClient.setQueryData(['bots'], (old: any) => {
+      queryClient.setQueryData<Bot[]>(['bots'], (old) => {
         if (!Array.isArray(old)) return old;
-        return old.map((b: any) =>
+        return old.map((b) =>
           b.id === bot_id ? { ...b, state: 'IDLE', open_position: null } : b
         );
       });
@@ -146,15 +89,15 @@ export default function BotsPage() {
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['bots'] }), 2000);
     };
 
-    const unsubSL = wsClient.subscribe('stop_loss_triggered', (data: any) => {
+    const unsubSL = wsClient.subscribe('stop_loss_triggered', (data: BotEvent) => {
       handlePositionClosed(data.bot_id);
     });
 
-    const unsubClosed = wsClient.subscribe('position_closed', (data: any) => {
+    const unsubClosed = wsClient.subscribe('position_closed', (data: BotEvent) => {
       handlePositionClosed(data.bot_id);
     });
 
-    const unsubPrice = wsClient.subscribe('price_update', (data: any) => {
+    const unsubPrice = wsClient.subscribe('price_update', (data: PriceUpdateEvent) => {
       updatePrice(data.symbol, data.price);
     });
 
@@ -226,8 +169,8 @@ export default function BotsPage() {
     setTab(key);
     try { localStorage.setItem(TAB_STORAGE_KEY, key); } catch {}
   };
-  const inTab = (bot: any, key: ExchangeTab) => key === 'all' || botExchange(bot) === key;
-  const shownBots = (bots ?? []).filter((b: any) => inTab(b, tab));
+  const inTab = (bot: Bot, key: ExchangeTab) => key === 'all' || botExchange(bot) === key;
+  const shownBots = (bots ?? []).filter((b) => inTab(b, tab));
   const groups = groupBots(shownBots);
 
   const [collapsed, setCollapsed] = useState<string[]>([]);
@@ -245,7 +188,7 @@ export default function BotsPage() {
     });
   };
 
-  const handleEntry = (bot: any) => {
+  const handleEntry = (bot: Bot) => {
     entryMutation.mutate(bot.id);
   };
 
@@ -273,8 +216,8 @@ export default function BotsPage() {
 
         <div className="flex gap-1 mb-3 overflow-x-auto border-b border-gray-700">
           {EXCHANGE_TABS.map(({ key, label }) => {
-            const list = (bots ?? []).filter((b: any) => inTab(b, key));
-            const open = list.filter((b: any) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
+            const list = (bots ?? []).filter((b) => inTab(b, key));
+            const open = list.filter((b) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
             const active = tab === key;
             return (
               <button
@@ -302,7 +245,7 @@ export default function BotsPage() {
           <GroupHeader group={g} collapsed={collapsed.includes(g.key)} onToggle={() => toggleGroup(g.key)} />
           {!collapsed.includes(g.key) && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {g.bots.map((bot: any) => (
+          {g.bots.map((bot) => (
             <div
               key={bot.id}
               className="bg-gray-800 rounded border border-gray-700 p-3"
@@ -516,994 +459,6 @@ export default function BotsPage() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function PositionPanel({ bot }: { bot: any }) {
-  const positionData = usePositionStore((s) => s.positions[bot.id]);
-  const currentPrice = usePriceStore((s) => s.prices[bot.symbol]);
-
-  if (!positionData) return null;
-
-  const { average_price, current_sl, order_count, unrealized_pnl, last_order_price, total_size } = positionData;
-  const maxOrders = bot.config.order_count;
-  const stepPercent = bot.config.step_percent;
-  const tpPercent = bot.config.tp_percent;
-
-  const botType = bot.config.bot_type ?? 'pyramiding';
-  // DCA: следующий страховочный — шаг от предыдущего ордера, × dca_multiplier_price
-  // на каждом следующем уровне (mirrors PositionCalculator.next_dca_price)
-  const dcaStep = (stepPercent / 100) * Math.pow(bot.config.dca_multiplier_price ?? 1, Math.max(order_count - 1, 0));
-  const nextAvgPrice = last_order_price != null && average_price != null && order_count < maxOrders
-    ? botType === 'dca'
-      ? bot.side === 'LONG'
-        ? last_order_price * (1 - dcaStep)
-        : last_order_price * (1 + dcaStep)
-      : bot.side === 'LONG'
-        ? last_order_price * (1 + stepPercent / 100)
-        : last_order_price * (1 - stepPercent / 100)
-    : null;
-
-  const tpTarget = average_price != null
-    ? bot.side === 'LONG'
-      ? average_price * (1 + tpPercent / 100)
-      : average_price * (1 - tpPercent / 100)
-    : null;
-
-  // total_size is the position's notional value in USDT (not coin quantity),
-  // so PnL scales with % price move applied to that notional — mirrors
-  // calculate_unrealized_pnl in position_calculator.py.
-  const livePnl = currentPrice && average_price && total_size
-    ? bot.side === 'LONG'
-      ? (total_size * (currentPrice - average_price)) / average_price
-      : (total_size * (average_price - currentPrice)) / average_price
-    : unrealized_pnl;
-
-  const fmt = (n: number | null | undefined, digits = 2) =>
-    n != null ? n.toFixed(digits) : '—';
-
-  return (
-    <div className="pt-2 border-t border-gray-700 mb-1">
-      {currentPrice && (
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-gray-500">Цена</span>
-          <span className="font-medium">${fmt(currentPrice, 4)}</span>
-        </div>
-      )}
-      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
-        <div className="flex justify-between">
-          <span className="text-gray-500">Avg</span>
-          <span>${fmt(average_price, 4)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">SL</span>
-          <span className="text-red-400">${fmt(current_sl, 4)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">{botType === 'dca' ? 'DCA↓' : 'Пир↑'}</span>
-          <span>${fmt(nextAvgPrice, 4)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Орд</span>
-          <span>{order_count}/{maxOrders}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">PnL</span>
-          <span className={livePnl >= 0 ? 'text-green-400' : 'text-red-400'}>${fmt(livePnl, 2)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">TP</span>
-          <span className="text-green-400">${fmt(tpTarget, 4)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-type EntrySignal = {
-  type: 'mrc' | 'supertrend';
-  timeframe: string;
-  entry_band: number;
-  trend_ema_period: number | null;
-  trend_timeframe: string;
-  [key: string]: unknown;
-};
-
-// Параметры MRC по умолчанию совпадают с бэктестом стратегии MRC DCA (length 200, outer 2.415, hlc3)
-const DEFAULT_ENTRY_SIGNAL: EntrySignal = {
-  type: 'mrc',
-  timeframe: '15',
-  entry_band: 2,
-  trend_ema_period: 200,
-  trend_timeframe: 'D',
-};
-
-const TF_LABEL: Record<string, string> = { '60': '1h', '240': '4h', D: 'дневке' };
-
-function signalName(s: EntrySignal | null | undefined) {
-  return s?.type === 'supertrend' ? `Supertrend ${s.timeframe}m` : 'MRC';
-}
-
-function trendLabel(s: EntrySignal | null | undefined) {
-  if (!s?.trend_ema_period) return '';
-  const fast = s.trend_ema_fast ? `EMA${s.trend_ema_fast}/` : 'EMA';
-  return ` · ${fast}${s.trend_ema_period} ${TF_LABEL[s.trend_timeframe] ?? s.trend_timeframe}`;
-}
-
-function EntrySignalFields({
-  value,
-  onChange,
-}: {
-  value: EntrySignal | null;
-  onChange: (v: EntrySignal | null) => void;
-}) {
-  return (
-    <div className="col-span-2 border-t border-gray-700 pt-2">
-      <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-        <input
-          type="checkbox"
-          checked={!!value}
-          onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_ENTRY_SIGNAL } : null)}
-        />
-        {value?.type === 'supertrend'
-          ? `Вход по развороту ${signalName(value)}${trendLabel(value)}`
-          : 'Вход по сигналу MRC (15m, полоса 2)'}
-      </label>
-      {value && (
-        <div className="flex items-center gap-2 mt-2 text-xs">
-          <span className="text-gray-400">
-            Фильтр тренда EMA на {TF_LABEL[value.trend_timeframe] ?? value.trend_timeframe}
-          </span>
-          <input
-            type="number"
-            min={2}
-            max={500}
-            placeholder="выкл"
-            value={value.trend_ema_period ?? ''}
-            onChange={(e) =>
-              onChange({ ...value, trend_ema_period: e.target.value ? parseInt(e.target.value) : null })
-            }
-            className="w-20 px-2 py-1 bg-gray-700 border border-gray-600 rounded"
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-const STRADDLE_DEFAULTS = {
-  phase2_after_steps: 3,
-  add_stop_steps: 1,
-  time_stop_minutes: 240 as number | null,
-  max_rearms: 1,
-};
-
-// Переключение формы на straddle: шаг/доборы/трейлинг — как в примере TODO/6
-function toStraddle<T extends Record<string, any>>(f: T): T {
-  return {
-    ...f, bot_type: 'straddle', side: 'NEUTRAL', order_count: 4, step_percent: 2,
-    pyramiding_multiplier: 1, use_trailing: true, trailing_percent: 5, tp_percent: 100,
-    entry_signal: null,
-  };
-}
-
-function StraddleFields({ value, onChange }: { value: any; onChange: (v: Record<string, any>) => void }) {
-  const num = (k: string, parse: (x: string) => number) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    onChange({ [k]: e.target.value === '' ? null : parse(e.target.value) });
-  const input = 'w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded';
-  return (
-    <>
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Фаза 2 через (шагов)</label>
-        <input type="number" value={value.phase2_after_steps} onChange={num('phase2_after_steps', parseInt)}
-          className={input} min="1" max="10" />
-        <p className="text-[11px] text-gray-500 mt-1">Закрыть минусовую сторону и вести весь ход трейлингом</p>
-      </div>
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Стоп доборов (шагов от 1-го)</label>
-        <input type="number" value={value.add_stop_steps} onChange={num('add_stop_steps', parseFloat)}
-          className={input} step="0.5" min="0.5" max="3" />
-        <p className="text-[11px] text-gray-500 mt-1">1 — в точке запуска, 0.5 — полшага до неё, 1.5 — за ней</p>
-      </div>
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Стоп по времени (мин)</label>
-        <input type="number" value={value.time_stop_minutes ?? ''} onChange={num('time_stop_minutes', parseInt)}
-          className={input} min="1" placeholder="без лимита" />
-        <p className="text-[11px] text-gray-500 mt-1">Нет фазы 2 за это время — закрыть всё</p>
-      </div>
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Перевзводов после пилы</label>
-        <input type="number" value={value.max_rearms} onChange={num('max_rearms', parseInt)}
-          className={input} min="0" max="10" />
-        <p className="text-[11px] text-gray-500 mt-1">Сколько раз можно вернуться в точку запуска</p>
-      </div>
-    </>
-  );
-}
-
-const STRADDLE_REASON: Record<string, string> = {
-  TRAILING_STOP: 'трейлинг', TIME_STOP: 'стоп по времени', MAX_REARMS: 'лимит пил',
-  MANUAL_CLOSE: 'вручную', EXCHANGE_CLOSED: 'закрыта на бирже',
-};
-
-// PnL стороны — как leg_pnl в domain/trading/straddle.py (ордера в USDT по своей цене)
-function legPnl(orders: [number, number][], side: 'LONG' | 'SHORT', price: number) {
-  const d = side === 'LONG' ? 1 : -1;
-  return orders.reduce((a, [p, u]) => a + u * d * (price / p - 1), 0);
-}
-
-function StraddlePanel({ bot }: { bot: any }) {
-  const livePrice = usePriceStore((s) => s.prices[bot.symbol]);
-  const st = bot.straddle;
-  if (!st) return null;
-  const price = livePrice ?? st.price ?? st.anchor;
-  const pnl = {
-    LONG: legPnl(st.legs.LONG, 'LONG', price),
-    SHORT: legPnl(st.legs.SHORT, 'SHORT', price),
-  };
-  const total = st.realized + pnl.LONG + pnl.SHORT;
-  const money = (n: number) => `${n >= 0 ? '+' : ''}$${n.toFixed(2)}`;
-  const tone = (n: number) => (n >= 0 ? 'text-green-400' : 'text-red-400');
-  const phase = st.phase === 2
-    ? `${st.working} · фаза 2 (минусовая закрыта, трейлинг)`
-    : st.phase === 1
-      ? `${st.working} добирает · ордеров ${st.legs[st.working].length}/${bot.config.order_count}`
-      : st.reset_needed ? 'после пилы — жду возврата к точке' : 'пара открыта, жду хода';
-  const step = bot.config.step_percent / 100;
-  const leftMin = bot.config.time_stop_minutes && st.phase < 2
-    ? Math.max(0, Math.round(bot.config.time_stop_minutes - (Date.now() / 1000 - st.started_at) / 60))
-    : null;
-  const leg = (side: 'LONG' | 'SHORT') => (
-    <div>
-      <span className="text-gray-500">{side} </span>
-      {st.legs[side].length
-        ? <span className={tone(pnl[side])}>{money(pnl[side])} <span className="text-gray-500">×{st.legs[side].length}</span></span>
-        : <span className="text-gray-600">закрыт</span>}
-    </div>
-  );
-
-  return (
-    <div className="pt-2 border-t border-gray-700 mb-1 text-xs">
-      <div className="flex justify-between mb-1">
-        <span className="text-gray-500">Цена / точка</span>
-        <span className="font-medium">${price.toFixed(4)} / ${st.anchor.toFixed(4)}</span>
-      </div>
-      <div className="text-purple-300 mb-1">{phase}</div>
-      <div className="grid grid-cols-3 gap-x-2 mb-1">
-        {leg('LONG')}
-        {leg('SHORT')}
-        <div className="text-right"><span className="text-gray-500">Итог </span><span className={`font-semibold ${tone(total)}`}>{money(total)}</span></div>
-      </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-        <div className="flex justify-between">
-          <span className="text-gray-500">Уровни</span>
-          <span>↑{(st.anchor * (1 + step)).toFixed(4)} ↓{(st.anchor * (1 - step)).toFixed(4)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Стоп {st.working ?? ''}</span>
-          <span className="text-red-400">{st.stop ? `$${st.stop.toFixed(4)}` : '—'}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Пилы</span>
-          <span>{st.rearms}/{bot.config.max_rearms}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-500">Стоп по врем.</span>
-          <span>{leftMin != null ? `${leftMin} мин` : '—'}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EditBotModal({ bot, onClose }: { bot: any; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const [exchange, setExchange] = useState<'cryptorg' | 'bybit' | 'paper'>(bot.exchange ?? 'cryptorg');
-  const [accountId, setAccountId] = useState<number | null>(bot.account_id ?? null);
-  const [bybitAccountId, setBybitAccountId] = useState<number | null>(bot.bybit_account_id ?? null);
-  const [formData, setFormData] = useState({
-    name: bot.name,
-    symbol: bot.symbol,
-    side: bot.side,
-    bot_type: bot.config.bot_type ?? 'pyramiding',
-    order_count: bot.config.order_count ?? 4,
-    entry_size_usdt: bot.config.entry_size_usdt ?? 10,
-    step_percent: bot.config.step_percent ?? 4,
-    leverage: bot.config.leverage ?? 10,
-    pyramiding_multiplier: bot.config.pyramiding_multiplier ?? 1.5,
-    dca_multiplier: bot.config.dca_multiplier ?? 1.0,
-    dca_multiplier_price: bot.config.dca_multiplier_price ?? 1.0,
-    sl_enabled: bot.config.sl_initial !== null && bot.config.sl_initial !== undefined,
-    sl_initial: bot.config.sl_initial ?? 5,
-    sl_breakeven_plus: bot.config.sl_breakeven_plus ?? 0.5,
-    tp_percent: bot.config.tp_percent ?? 3,
-    sl_after_order3: bot.config.sl_after_order3 ?? 2,
-    use_trailing: bot.config.use_trailing ?? true,
-    trailing_percent: bot.config.trailing_percent ?? 1.5,
-    sl_breakeven_on_order2: bot.config.sl_breakeven_on_order2 ?? true,
-    cycle: bot.config.cycle ?? false,
-    entry_signal: bot.config.entry_signal ?? null,
-    phase2_after_steps: bot.config.phase2_after_steps ?? STRADDLE_DEFAULTS.phase2_after_steps,
-    add_stop_steps: bot.config.add_stop_steps ?? STRADDLE_DEFAULTS.add_stop_steps,
-    time_stop_minutes: bot.config.time_stop_minutes ?? STRADDLE_DEFAULTS.time_stop_minutes,
-    max_rearms: bot.config.max_rearms ?? STRADDLE_DEFAULTS.max_rearms,
-  });
-
-  const { data: accounts = [] } = useQuery<any[]>({
-    queryKey: ['accounts'],
-    queryFn: async () => (await accountsApi.getAll()).data,
-  });
-
-  const { data: bybitAccounts = [] } = useQuery<any[]>({
-    queryKey: ['bybit-accounts'],
-    queryFn: async () => (await bybitAccountsApi.getAll()).data,
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: (data: any) => botsApi.update(bot.id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bots'] });
-      onClose();
-    },
-  });
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const { name, symbol, side, sl_enabled, ...rest } = formData;
-    const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    updateMutation.mutate({
-      name, symbol, side, config,
-      exchange,
-      account_id: exchange === 'cryptorg' ? accountId : null,
-      bybit_account_id: exchange === 'bybit' ? bybitAccountId : null,
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-3 z-50">
-      <div className="bg-gray-800 rounded-lg max-w-xl w-full max-h-[90vh] overflow-y-auto p-4">
-        <h2 className="text-base font-bold mb-2">Редактировать — {bot.name}</h2>
-
-        {bot.state !== 'IDLE' && (
-          <div className="mb-3 px-2 py-1.5 bg-yellow-900/40 border border-yellow-700 rounded text-yellow-300 text-xs">
-            Бот активен — изменения применятся со следующей сделки
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {/* Bot type toggle */}
-          <div className="flex rounded overflow-hidden border border-gray-600">
-            <button type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'pyramiding' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-              Пирамидинг
-            </button>
-            <button type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'dca', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'dca' ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-              DCA
-            </button>
-            <button type="button"
-              onClick={() => setFormData(toStraddle(formData))}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'straddle' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-              Straddle
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Название</label>
-              <input type="text" value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Символ</label>
-              <input type="text" value={formData.symbol}
-                onChange={(e) => setFormData({ ...formData, symbol: e.target.value.toUpperCase() })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
-            </div>
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-400 mb-1">Биржа</label>
-              <div className="flex rounded overflow-hidden border border-gray-600">
-                <button type="button"
-                  onClick={() => setExchange('cryptorg')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'cryptorg' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Cryptorg
-                </button>
-                <button type="button"
-                  onClick={() => setExchange('bybit')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Bybit
-                </button>
-                <button type="button"
-                  onClick={() => setExchange('paper')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'paper' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Бумажный
-                </button>
-              </div>
-            </div>
-            {exchange === 'cryptorg' ? (
-              <div className="col-span-2">
-                <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
-                <select
-                  value={accountId ?? ''}
-                  onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                >
-                  <option value="">— Без аккаунта —</option>
-                  {accounts.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
-                  ))}
-                </select>
-              </div>
-            ) : exchange === 'bybit' ? (
-              <div className="col-span-2">
-                <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
-                <select
-                  value={bybitAccountId ?? ''}
-                  onChange={(e) => setBybitAccountId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                  required
-                >
-                  <option value="">— Выберите аккаунт —</option>
-                  {bybitAccounts.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.api_key_hint}){a.testnet ? ' — testnet' : ''}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <p className="col-span-2 text-xs text-gray-400">
-                Бумажный режим: ордера не уходят на биржу, исполнение по живой цене Bybit, комиссия 0.055% вычитается из PnL.
-              </p>
-            )}
-            {formData.bot_type === 'straddle' ? (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
-              <div className="px-2 py-1.5 text-sm bg-gray-700/50 border border-gray-600 rounded text-gray-300">LONG + SHORT</div>
-            </div>
-            ) : (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
-              <select value={formData.side}
-                onChange={(e) => setFormData({ ...formData, side: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded">
-                <option value="LONG">LONG</option>
-                <option value="SHORT">SHORT</option>
-              </select>
-            </div>
-            )}
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Плечо</label>
-              <input type="number" value={formData.leverage}
-                onChange={(e) => setFormData({ ...formData, leverage: parseInt(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" max="125" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Размер входа (USDT)</label>
-              <input type="number" value={formData.entry_size_usdt}
-                onChange={(e) => setFormData({ ...formData, entry_size_usdt: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" step="0.1" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : formData.bot_type === 'straddle' ? '(уровни от точки запуска)' : '(триггер ↑)'}
-              </label>
-              <input type="number" value={formData.step_percent}
-                onChange={(e) => setFormData({ ...formData, step_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">{formData.bot_type === 'straddle' ? 'Ордеров рабочей стороны (со входом)' : 'Кол-во ордеров (со входом)'}</label>
-              <input type="number" value={formData.order_count}
-                onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" min="1" max="10" />
-            </div>
-
-            {formData.bot_type !== 'dca' ? (
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Мультипликатор пир.</label>
-                <input type="number" value={formData.pyramiding_multiplier}
-                  onChange={(e) => setFormData({ ...formData, pyramiding_multiplier: parseFloat(e.target.value) })}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="0.1" max="3" />
-              </div>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">DCA мульт. объёма</label>
-                  <input type="number" value={formData.dca_multiplier}
-                    onChange={(e) => setFormData({ ...formData, dca_multiplier: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="1" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">DCA мульт. шага цены</label>
-                  <input type="number" value={formData.dca_multiplier_price}
-                    onChange={(e) => setFormData({ ...formData, dca_multiplier_price: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="1" />
-                </div>
-              </>
-            )}
-
-            {formData.bot_type === 'straddle' ? (
-              <StraddleFields value={formData} onChange={(v) => setFormData({ ...formData, ...v })} />
-            ) : (
-            <>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                <span className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={formData.sl_enabled}
-                    onChange={(e) => setFormData({ ...formData, sl_enabled: e.target.checked })} />
-                  Стоп-лосс на вход (%)
-                </span>
-              </label>
-              <input type="number" value={formData.sl_initial}
-                onChange={(e) => setFormData({ ...formData, sl_initial: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded disabled:opacity-40"
-                step="0.1" disabled={!formData.sl_enabled} />
-              <p className="text-[11px] text-gray-500 mt-1">
-                Защищает только 1–2 ордер. SL после 3 ордера и трейлинг ниже работают независимо и не выключаются этим чекбоксом.
-              </p>
-            </div>
-
-            </>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                Тейк-профит (%){formData.bot_type === 'straddle' ? ' · 100 — без тейка' : ''}
-              </label>
-              <input type="number" value={formData.tp_percent}
-                onChange={(e) => setFormData({ ...formData, tp_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="0.1" />
-            </div>
-
-            {formData.bot_type === 'pyramiding' && (
-              <>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">SL безубыток + (%)</label>
-                  <input type="number" value={formData.sl_breakeven_plus}
-                    onChange={(e) => setFormData({ ...formData, sl_breakeven_plus: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" min="0" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">SL после ордера 3 (%)</label>
-                  <input type="number" value={formData.sl_after_order3}
-                    onChange={(e) => setFormData({ ...formData, sl_after_order3: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-                </div>
-              </>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Трейлинг (%)</label>
-              <input type="number" value={formData.trailing_percent}
-                onChange={(e) => setFormData({ ...formData, trailing_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-            </div>
-
-            <div className="flex items-center">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                <input type="checkbox" checked={formData.use_trailing}
-                  onChange={(e) => setFormData({ ...formData, use_trailing: e.target.checked })} />
-                Трейлинг стоп
-              </label>
-            </div>
-
-            <div className="flex items-center">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                <input type="checkbox" checked={formData.cycle}
-                  onChange={(e) => setFormData({ ...formData, cycle: e.target.checked })} />
-                Цикл (авто-перезапуск)
-              </label>
-            </div>
-
-            {formData.bot_type === 'pyramiding' && (
-              <div className="flex items-center">
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                  <input type="checkbox" checked={formData.sl_breakeven_on_order2}
-                    onChange={(e) => setFormData({ ...formData, sl_breakeven_on_order2: e.target.checked })} />
-                  SL в безубыток на ордере 2
-                </label>
-              </div>
-            )}
-
-            {formData.bot_type !== 'straddle' && (
-            <EntrySignalFields
-              value={formData.entry_signal}
-              onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
-            />
-            )}
-          </div>
-
-          <div className="flex gap-2 pt-2">
-            <button type="submit"
-              className="flex-1 px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 rounded"
-              disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? 'Сохранение...' : 'Сохранить'}
-            </button>
-            <button type="button" onClick={onClose}
-              className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded">
-              Отмена
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function CreateBotModal({ onClose }: { onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const [exchange, setExchange] = useState<'cryptorg' | 'bybit' | 'paper'>('cryptorg');
-  const [accountId, setAccountId] = useState<number | null>(null);
-  const [bybitAccountId, setBybitAccountId] = useState<number | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    symbol: 'BTCUSDT',
-    side: 'LONG',
-    bot_type: 'pyramiding',
-    order_count: 4,
-    entry_size_usdt: 10.0,
-    step_percent: 4,
-    leverage: 10,
-    pyramiding_multiplier: 1.5,
-    dca_multiplier: 1.0,
-    dca_multiplier_price: 1.0,
-    sl_enabled: true,
-    sl_initial: 5,
-    sl_breakeven_plus: 0.5,
-    tp_percent: 3,
-    sl_after_order3: 2,
-    use_trailing: true,
-    trailing_percent: 1.5,
-    sl_breakeven_on_order2: true,
-    cycle: false,
-    entry_signal: null as EntrySignal | null,
-    ...STRADDLE_DEFAULTS,
-  });
-
-  const { data: accounts = [] } = useQuery<any[]>({
-    queryKey: ['accounts'],
-    queryFn: async () => (await accountsApi.getAll()).data,
-  });
-
-  const { data: bybitAccounts = [] } = useQuery<any[]>({
-    queryKey: ['bybit-accounts'],
-    queryFn: async () => (await bybitAccountsApi.getAll()).data,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (data: any) => botsApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bots'] });
-      onClose();
-    },
-  });
-
-  const errorMessage = createMutation.error
-    ? (() => {
-        const detail = (createMutation.error as any)?.response?.data?.detail;
-        if (Array.isArray(detail)) return detail.map((e: any) => e.msg).join(', ');
-        if (typeof detail === 'string') return detail;
-        return 'Failed to create bot';
-      })()
-    : null;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const { name, symbol, side, sl_enabled, ...rest } = formData;
-    const config = { ...rest, sl_initial: sl_enabled ? rest.sl_initial : null };
-    createMutation.mutate({
-      name, symbol, side, config,
-      exchange,
-      account_id: exchange === 'cryptorg' ? accountId : null,
-      bybit_account_id: exchange === 'bybit' ? bybitAccountId : null,
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-3 z-50">
-      <div className="bg-gray-800 rounded-lg max-w-xl w-full max-h-[90vh] overflow-y-auto p-4">
-        <h2 className="text-base font-bold mb-3">Создать бота</h2>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {/* Bot type toggle */}
-          <div className="flex rounded overflow-hidden border border-gray-600">
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'pyramiding', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
-                formData.bot_type === 'pyramiding' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-              }`}
-            >
-              Пирамидинг
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormData({ ...formData, bot_type: 'dca', side: formData.side === 'NEUTRAL' ? 'LONG' : formData.side })}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${
-                formData.bot_type === 'dca' ? 'bg-orange-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-              }`}
-            >
-              DCA
-            </button>
-            <button type="button"
-              onClick={() => setFormData(toStraddle(formData))}
-              className={`flex-1 py-1.5 text-xs font-medium transition-colors ${formData.bot_type === 'straddle' ? 'bg-purple-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-              Straddle
-            </button>
-          </div>
-
-          <p className="text-xs text-gray-500">
-            {formData.bot_type === 'pyramiding'
-              ? 'Добавляет ордера когда цена идёт в нашу сторону.'
-              : formData.bot_type === 'straddle'
-                ? 'При запуске открывает LONG и SHORT. Сторона, куда пошла цена, добирает каждый шаг, вторая не добирает и страхует. Возврат к точке запуска — доборы закрываются; ушли на N шагов — минусовая закрывается, дальше трейлинг.'
-                : 'Cryptorg ставит лимитки ниже рынка, усредняет позицию.'}
-          </p>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Название</label>
-              <input type="text" value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Символ</label>
-              <input type="text" value={formData.symbol}
-                onChange={(e) => setFormData({ ...formData, symbol: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" required />
-            </div>
-
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-400 mb-1">Биржа</label>
-              <div className="flex rounded overflow-hidden border border-gray-600">
-                <button type="button"
-                  onClick={() => setExchange('cryptorg')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'cryptorg' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Cryptorg
-                </button>
-                <button type="button"
-                  onClick={() => setExchange('bybit')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'bybit' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Bybit
-                </button>
-                <button type="button"
-                  onClick={() => setExchange('paper')}
-                  className={`flex-1 py-1.5 text-xs font-medium transition-colors ${exchange === 'paper' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'}`}>
-                  Бумажный
-                </button>
-              </div>
-            </div>
-
-            {exchange === 'cryptorg' ? (
-              <div className="col-span-2">
-                <label className="block text-xs text-gray-400 mb-1">Аккаунт Cryptorg</label>
-                <select
-                  value={accountId ?? ''}
-                  onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                >
-                  <option value="">— Без аккаунта —</option>
-                  {accounts.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.webhook_url_hint})</option>
-                  ))}
-                </select>
-              </div>
-            ) : exchange === 'bybit' ? (
-              <div className="col-span-2">
-                <label className="block text-xs text-gray-400 mb-1">Аккаунт Bybit</label>
-                <select
-                  value={bybitAccountId ?? ''}
-                  onChange={(e) => setBybitAccountId(e.target.value ? Number(e.target.value) : null)}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                  required
-                >
-                  <option value="">— Выберите аккаунт —</option>
-                  {bybitAccounts.map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name} ({a.api_key_hint}){a.testnet ? ' — testnet' : ''}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <p className="col-span-2 text-xs text-gray-400">
-                Бумажный режим: ордера не уходят на биржу, исполнение по живой цене Bybit, комиссия 0.055% вычитается из PnL.
-              </p>
-            )}
-
-            {formData.bot_type === 'straddle' ? (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
-              <div className="px-2 py-1.5 text-sm bg-gray-700/50 border border-gray-600 rounded text-gray-300">LONG + SHORT</div>
-            </div>
-            ) : (
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Сторона</label>
-              <select value={formData.side}
-                onChange={(e) => setFormData({ ...formData, side: e.target.value })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded">
-                <option value="LONG">LONG</option>
-                <option value="SHORT">SHORT</option>
-              </select>
-            </div>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Плечо</label>
-              <input type="number" value={formData.leverage}
-                onChange={(e) => setFormData({ ...formData, leverage: parseInt(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                min="1" max="125" />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Размер входа (USDT)</label>
-              <input type="number" value={formData.entry_size_usdt}
-                onChange={(e) => setFormData({ ...formData, entry_size_usdt: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                min="1" step="0.1" />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                Шаг % {formData.bot_type === 'dca' ? '(усреднение ↓)' : formData.bot_type === 'straddle' ? '(уровни от точки запуска)' : '(триггер ↑)'}
-              </label>
-              <input type="number" value={formData.step_percent}
-                onChange={(e) => setFormData({ ...formData, step_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">{formData.bot_type === 'straddle' ? 'Ордеров рабочей стороны (со входом)' : 'Кол-во ордеров (со входом)'}</label>
-              <input type="number" value={formData.order_count}
-                onChange={(e) => setFormData({ ...formData, order_count: parseInt(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                min="1" max="10" />
-            </div>
-
-            {formData.bot_type !== 'dca' ? (
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Мультипликатор пир.</label>
-                <input type="number" value={formData.pyramiding_multiplier}
-                  onChange={(e) => setFormData({ ...formData, pyramiding_multiplier: parseFloat(e.target.value) })}
-                  className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                  step="0.1" min="0.1" max="3" />
-              </div>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">DCA мульт. объёма</label>
-                  <input type="number" value={formData.dca_multiplier}
-                    onChange={(e) => setFormData({ ...formData, dca_multiplier: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                    step="0.1" min="1" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">DCA мульт. шага цены</label>
-                  <input type="number" value={formData.dca_multiplier_price}
-                    onChange={(e) => setFormData({ ...formData, dca_multiplier_price: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                    step="0.1" min="1" />
-                </div>
-              </>
-            )}
-
-            {formData.bot_type === 'straddle' ? (
-              <StraddleFields value={formData} onChange={(v) => setFormData({ ...formData, ...v })} />
-            ) : (
-            <>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                <span className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={formData.sl_enabled}
-                    onChange={(e) => setFormData({ ...formData, sl_enabled: e.target.checked })} />
-                  Стоп-лосс на вход (%)
-                </span>
-              </label>
-              <input type="number" value={formData.sl_initial}
-                onChange={(e) => setFormData({ ...formData, sl_initial: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded disabled:opacity-40"
-                step="0.1" disabled={!formData.sl_enabled} />
-              <p className="text-[11px] text-gray-500 mt-1">
-                Защищает только 1–2 ордер. SL после 3 ордера и трейлинг ниже работают независимо и не выключаются этим чекбоксом.
-              </p>
-            </div>
-
-            </>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">
-                Тейк-профит (%){formData.bot_type === 'straddle' ? ' · 100 — без тейка' : ''}
-              </label>
-              <input type="number" value={formData.tp_percent}
-                onChange={(e) => setFormData({ ...formData, tp_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                step="0.1" min="0.1" />
-            </div>
-
-            {formData.bot_type === 'pyramiding' && (
-              <>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">SL безубыток + (%)</label>
-                  <input type="number" value={formData.sl_breakeven_plus}
-                    onChange={(e) => setFormData({ ...formData, sl_breakeven_plus: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded"
-                    step="0.1" min="0" />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">SL после ордера 3 (%)</label>
-                  <input type="number" value={formData.sl_after_order3}
-                    onChange={(e) => setFormData({ ...formData, sl_after_order3: parseFloat(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-                </div>
-              </>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Трейлинг (%)</label>
-              <input type="number" value={formData.trailing_percent}
-                onChange={(e) => setFormData({ ...formData, trailing_percent: parseFloat(e.target.value) })}
-                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded" step="0.1" />
-            </div>
-
-            <div className="flex items-center">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                <input type="checkbox" checked={formData.use_trailing}
-                  onChange={(e) => setFormData({ ...formData, use_trailing: e.target.checked })} />
-                Трейлинг стоп
-              </label>
-            </div>
-
-            <div className="flex items-center">
-              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                <input type="checkbox" checked={formData.cycle}
-                  onChange={(e) => setFormData({ ...formData, cycle: e.target.checked })} />
-                Цикл (авто-перезапуск)
-              </label>
-            </div>
-
-            {formData.bot_type === 'pyramiding' && (
-              <div className="flex items-center">
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs">
-                  <input type="checkbox" checked={formData.sl_breakeven_on_order2}
-                    onChange={(e) => setFormData({ ...formData, sl_breakeven_on_order2: e.target.checked })} />
-                  SL в безубыток на ордере 2
-                </label>
-              </div>
-            )}
-
-            {formData.bot_type !== 'straddle' && (
-            <EntrySignalFields
-              value={formData.entry_signal}
-              onChange={(entry_signal) => setFormData({ ...formData, entry_signal })}
-            />
-            )}
-          </div>
-
-          {errorMessage && (
-            <div className="text-red-400 text-xs bg-red-900/30 border border-red-700 rounded px-2 py-1.5">
-              {errorMessage}
-            </div>
-          )}
-
-          <div className="flex gap-2 pt-2">
-            <button type="submit"
-              className="flex-1 px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 rounded"
-              disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Создание...' : 'Создать'}
-            </button>
-            <button type="button" onClick={onClose}
-              className="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 rounded">
-              Отмена
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
   );
 }

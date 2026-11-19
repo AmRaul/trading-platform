@@ -1,5 +1,6 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { getAccessToken, goToLogin, refreshAccessToken } from './auth';
+import type { Bot, BotPayload } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const SIGNALS_URL = process.env.NEXT_PUBLIC_SIGNALS_URL || 'http://localhost:8020';
@@ -69,15 +70,15 @@ export const authApi = {
 
 // Bots API
 export const botsApi = {
-  getAll: () => api.get('/api/bots/'),
+  getAll: () => api.get<Bot[]>('/api/bots/'),
 
   getCryptorg: () => api.get('/api/bots/cryptorg'),
 
   getOne: (id: number) => api.get(`/api/bots/${id}`),
 
-  create: (data: any) => api.post('/api/bots/', data),
+  create: (data: BotPayload) => api.post<Bot>('/api/bots/', data),
 
-  update: (id: number, data: any) => api.patch(`/api/bots/${id}`, data),
+  update: (id: number, data: Partial<BotPayload>) => api.patch<Bot>(`/api/bots/${id}`, data),
 
   delete: (id: number) => api.delete(`/api/bots/${id}`),
 };

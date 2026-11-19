@@ -11,20 +11,19 @@ interface AuthState {
   user: User | null;
   setUser: (user: User | null) => void;
   logout: () => void;
-}
-
-function storedUser(): User | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const username = localStorage.getItem('username');
-    return username ? { username } : null;  // имя — для шапки; сессию подтверждает refresh
-  } catch {
-    return null;
-  }
+  hydrate: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: storedUser(),
+  // null и на сервере, и в первом рендере клиента — иначе расхождение гидратации (React #418);
+  // имя из localStorage подставляет hydrate() после монтирования (app/providers.tsx)
+  user: null,
+  hydrate: () => {
+    try {
+      const username = localStorage.getItem('username');
+      if (username) set({ user: { username } });  // имя — для шапки; сессию подтверждает refresh
+    } catch {}
+  },
   setUser: (user) => {
     set({ user: user ? { username: user.username } : null });
     setAccessToken(user?.token ?? null);
