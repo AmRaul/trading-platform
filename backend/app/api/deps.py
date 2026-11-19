@@ -49,6 +49,10 @@ async def get_admin_user(current_user: User = Depends(get_current_user)) -> User
     closed, not open) so an unconfigured deploy doesn't accidentally expose
     /api/admin/* to whoever's username happens to be an empty string.
     """
-    if not settings.ADMIN_USERNAME or current_user.username != settings.ADMIN_USERNAME:
+    if not is_admin(current_user):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+
+def is_admin(user: User) -> bool:
+    return bool(settings.ADMIN_USERNAME) and user.username == settings.ADMIN_USERNAME

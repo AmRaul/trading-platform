@@ -52,5 +52,7 @@ PRODUCTION_READINESS_PROGRESS.md
 STRATEGY_LOGIC.md
 TECH_LEAD_REVIEW.md
 
-# Локальные исследования стратегий (скрипты бэктестов)
-services/backtester/research/
+# Исследования стратегий — в git (на них держатся карточки и ожидания форвард-теста),
+# их выходные файлы — нет: пишутся в --out вне репозитория
+services/backtester/research/*.json
+services/backtester/research/*.csv
