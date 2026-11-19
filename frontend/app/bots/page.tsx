@@ -8,6 +8,20 @@ import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity } from 'lucide
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
 
+type ExchangeTab = 'all' | 'paper' | 'bybit' | 'cryptorg';
+
+const EXCHANGE_TABS: { key: ExchangeTab; label: string }[] = [
+  { key: 'all', label: 'Все' },
+  { key: 'paper', label: 'Бумажные' },
+  { key: 'bybit', label: 'Bybit' },
+  { key: 'cryptorg', label: 'Cryptorg' },
+];
+
+const TAB_STORAGE_KEY = 'bots-exchange-tab';
+
+// Старые боты без exchange — Cryptorg (как и дефолт в форме редактирования)
+const botExchange = (bot: any): ExchangeTab => bot.exchange ?? 'cryptorg';
+
 export default function BotsPage() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -146,6 +160,20 @@ export default function BotsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
   });
 
+  const [tab, setTab] = useState<ExchangeTab>('all');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TAB_STORAGE_KEY) as ExchangeTab | null;
+      if (saved && EXCHANGE_TABS.some((t) => t.key === saved)) setTab(saved);
+    } catch {}
+  }, []);
+  const selectTab = (key: ExchangeTab) => {
+    setTab(key);
+    try { localStorage.setItem(TAB_STORAGE_KEY, key); } catch {}
+  };
+  const inTab = (bot: any, key: ExchangeTab) => key === 'all' || botExchange(bot) === key;
+  const shownBots = (bots ?? []).filter((b: any) => inTab(b, tab));
+
   const handleEntry = (bot: any) => {
     entryMutation.mutate(bot.id);
   };
@@ -172,8 +200,33 @@ export default function BotsPage() {
           </button>
         </div>
 
+        <div className="flex gap-1 mb-3 overflow-x-auto border-b border-gray-700">
+          {EXCHANGE_TABS.map(({ key, label }) => {
+            const list = (bots ?? []).filter((b: any) => inTab(b, key));
+            const open = list.filter((b: any) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
+            const active = tab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => selectTab(key)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 -mb-px border-b-2 text-sm transition-colors ${
+                  active ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {label}
+                <span className={`px-1.5 rounded text-xs ${active ? 'bg-blue-900 text-blue-200' : 'bg-gray-800 text-gray-400'}`}>
+                  {list.length}
+                </span>
+                {open > 0 && (
+                  <span className="text-xs text-green-400" title="В позиции">● {open}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {bots?.map((bot: any) => (
+          {shownBots.map((bot: any) => (
             <div
               key={bot.id}
               className="bg-gray-800 rounded border border-gray-700 p-3"
@@ -327,9 +380,9 @@ export default function BotsPage() {
             </div>
           ))}
 
-          {bots?.length === 0 && (
+          {bots && shownBots.length === 0 && (
             <div className="col-span-full text-center py-8 text-gray-500 border border-gray-700 rounded text-sm">
-              Нет ботов. Нажмите «Создать».
+              {bots.length === 0 ? 'Нет ботов. Нажмите «Создать».' : 'На этой площадке ботов нет.'}
             </div>
           )}
         </div>
