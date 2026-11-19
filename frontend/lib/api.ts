@@ -19,30 +19,33 @@ export const backtesterApi2 = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// Add auth token to requests
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Expired/invalid token → drop it and send the user to login
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    const isAuthCall = error.config?.url?.startsWith('/api/auth/');
-    if (error.response?.status === 401 && !isAuthCall && typeof window !== 'undefined') {
-      localStorage.removeItem('token');
-      localStorage.removeItem('username');
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
-      }
+// Токен kandle — во все три API: signals. и backtester. закрыты nginx-проверкой
+// этого же токена (auth_request → /api/auth/verify)
+for (const client of [api, signalsApi2, backtesterApi2]) {
+  client.interceptors.request.use((config) => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-    return Promise.reject(error);
-  }
-);
+    return config;
+  });
+
+  // Expired/invalid token → drop it and send the user to login
+  client.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const isAuthCall = error.config?.url?.startsWith('/api/auth/');
+      if (error.response?.status === 401 && !isAuthCall && typeof window !== 'undefined') {
+        localStorage.removeItem('token');
+        localStorage.removeItem('username');
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
+      return Promise.reject(error);
+    }
+  );
+}
 
 // Auth API
 export const authApi = {
