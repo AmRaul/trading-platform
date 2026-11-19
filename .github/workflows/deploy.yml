@@ -61,9 +61,20 @@ jobs:
       - run: pip install -r services/mcp/requirements.txt
       - run: cd services/mcp && pytest -q
 
+  test-alerter:
+    name: Tests · alerter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r services/alerter/requirements.txt
+      - run: cd services/alerter && pytest -q
+
   build:
     name: Build · ${{ matrix.name }}
-    needs: [test-backend, test-backtester, test-mcp]
+    needs: [test-backend, test-backtester, test-mcp, test-alerter]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,6 +101,9 @@ jobs:
           - name: kandle-mcp
             context: ./services/mcp
             dockerfile: ./services/mcp/Dockerfile
+          - name: alerter
+            context: ./services/alerter
+            dockerfile: ./services/alerter/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -164,11 +178,13 @@ jobs:
           KANDLE_MCP_USERNAME: ${{ secrets.KANDLE_MCP_USERNAME }}
           KANDLE_MCP_PASSWORD: ${{ secrets.KANDLE_MCP_PASSWORD }}
           KANDLE_MCP_TOKEN: ${{ secrets.KANDLE_MCP_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD,KANDLE_MCP_USERNAME,KANDLE_MCP_PASSWORD,KANDLE_MCP_TOKEN
+          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD,KANDLE_MCP_USERNAME,KANDLE_MCP_PASSWORD,KANDLE_MCP_TOKEN,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
           script_stop: true
           script: |
             set -euo pipefail
@@ -208,6 +224,9 @@ jobs:
             KANDLE_MCP_USERNAME='${KANDLE_MCP_USERNAME}'
             KANDLE_MCP_PASSWORD='${KANDLE_MCP_PASSWORD}'
             KANDLE_MCP_TOKEN='${KANDLE_MCP_TOKEN}'
+            ALERTER_IMAGE='${IMAGE_PREFIX}-alerter:${TAG}'
+            TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}'
+            TELEGRAM_CHAT_ID='${TELEGRAM_CHAT_ID}'
             EOF
             sed -i 's/^[[:space:]]*//' .env
 

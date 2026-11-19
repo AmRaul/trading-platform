@@ -100,6 +100,14 @@ class PriceStreamManager:
         self._pubsub_task: asyncio.Task | None = None
         self._pubsub = None
 
+    @property
+    def listener_alive(self) -> bool:
+        """Слушатель Redis работает, если ему есть на что подписываться. Без каналов
+        (нет ботов в позиции) его и не должно быть — это не поломка."""
+        if not self._listened_channels:
+            return True
+        return bool(self._pubsub_task and not self._pubsub_task.done())
+
     async def _ensure_listener(self):
         if self._pubsub_task and not self._pubsub_task.done():
             return
