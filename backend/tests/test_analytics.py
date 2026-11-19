@@ -96,7 +96,8 @@ def test_pyramiding_bot_not_in_price_stream():
 
 
 def test_pyramiding_bot_healthy():
-    assert _assess(state="PYRAMIDING", has_open_position=True, registered_for_prices=True)["status"] == "ok"
+    assert _assess(state="PYRAMIDING", has_open_position=True, registered_for_prices=True,
+                   last_tick_ms=NOW - 3_000)["status"] == "ok"
 
 
 def test_pyramiding_without_position():

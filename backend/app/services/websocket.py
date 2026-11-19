@@ -4,6 +4,7 @@ from app.core.redis import get_redis, price_channel
 from app.services.strategy import StrategyEngine
 from app.core.database import AsyncSessionLocal
 import json
+import time
 import asyncio
 import logging
 
@@ -92,6 +93,8 @@ class PriceStreamManager:
     def __init__(self):
         self.strategy_engines: Dict[int, StrategyEngine] = {}
         self.registered_bots: Set[int] = set()
+        # symbol -> время последнего тика из Redis, мс — для bots-health («идут ли цены»)
+        self.last_tick_ms: Dict[str, int] = {}
         # symbol -> set of (exchange, symbol) channels being listened to
         self._listened_channels: Set[str] = set()
         self._pubsub_task: asyncio.Task | None = None
@@ -122,6 +125,7 @@ class PriceStreamManager:
                         data = json.loads(message["data"])
                         symbol = data["symbol"]
                         price = float(data["price"])
+                        self.last_tick_ms[symbol] = int(time.time() * 1000)
                         await manager.broadcast_price_update(symbol, price)
                         await self._update_strategies(symbol, price)
                     except Exception as e:

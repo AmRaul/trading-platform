@@ -160,9 +160,10 @@ def _dist(price: float, level: Optional[float], atr: Optional[float]) -> Optiona
 
 @mcp.tool(annotations=READ)
 async def bots_health() -> Dict:
-    """Живы ли боты: по каждому — состояние, проверяет ли планировщик сигнал
-    (SIGNAL), подписан ли на поток цен (позиция открыта), не выпал ли из цикла
-    в IDLE. status=problem и issues — что не так."""
+    """Живы ли боты: по каждому — состояние; у ждущих сигнала (SIGNAL) — когда
+    планировщик последний раз проверял сигнал; у ботов в позиции — подписан ли
+    на поток цен и когда пришёл последний тик (last_price_tick_sec_ago, >5 мин —
+    проблема); не выпал ли из цикла в IDLE. status=problem и issues — что не так."""
     data = await api.get("/api/analytics/bots-health")
     for b in data["bots"]:
         if b.get("last_signal_check"):
@@ -265,6 +266,28 @@ async def get_position_context(bot_id: int, timeframe: str = "1d", bars: int = 3
     return out
 
 
+def _iso(ms: Optional[int]) -> Optional[str]:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if ms else None
+
+
+@mcp.tool(annotations=READ)
+async def reconcile_position(position_id: int) -> Dict:
+    """Сверка позиции (открытой или закрытой) с бэктестом на тех же свечах Bybit:
+    был ли сигнал на свече входа, те же ли доборы, тот же ли выход.
+    verdict: match — совпало; price_drift — механика та же, цены/время дальше допуска
+    (0.15% / 5 мин); mismatch — другой вход, другое число ордеров или другой выход
+    (критерий остановки 4 форвард-теста); manual — закрыта руками.
+    position_id — из get_trades (поле position_id) или list_bots (open_position.id)."""
+    r = await api.get(f"/api/analytics/reconcile/{position_id}")
+    for row in r.get("orders", []):
+        for k in ("live_time_ms", "replay_time_ms"):
+            row[k.replace("_ms", "")] = _iso(row.pop(k, None))
+    sig = r.get("entry_signal")
+    if sig:
+        sig["signal_candle_close"] = _iso(sig.pop("signal_candle_close_ms", None))
+    return r
+
+
 @mcp.tool()
 async def log_review(kind: str, summary: str, bot_id: Optional[int] = None, position_id: Optional[int] = None,
                      symbol: Optional[str] = None, verdict: Optional[Dict[str, Any]] = None) -> Dict:
@@ -295,7 +318,7 @@ async def list_reviews(kind: Optional[str] = None, bot_id: Optional[int] = None,
 def health_check() -> str:
     """Проверить, что боты живы (не затёрлись, сигналы проверяются, цены идут)."""
     return """Проверь, живы ли мои боты.
-1. Вызови bots_health.
+1. Вызови bots_health (у ботов в позиции важен свежий тик цены, у ждущих сигнала — свежая проверка).
 2. Если problems = 0 — коротко: сколько ботов, в каких состояниях, когда последний раз проверялся сигнал.
 3. Если есть проблемы — по каждой: бот, что не так, вероятная причина, что сделать (например,
    перезапустить ожидание сигнала). Ничего не меняй сам — у тебя нет торговых инструментов.
@@ -332,6 +355,10 @@ def monthly_review(since: str, until: Optional[str] = None) -> str:
 1. bots_health — все ли 6 бумажных ботов живы.
 2. portfolio_summary(since="{since}"{f', until="{until}"' if until else ''}, exchange="paper").
 3. get_market_context("BTCUSDT", "1d") — режим BTC (объясняет активность MRC).
+3a. Сверка с бэктестом (критерий 4): reconcile_position для закрытых сделок периода (get_trades,
+   поле position_id) — все, если их ≤ 15, иначе 10 последних + все с выходом не по SL_HIT.
+   mismatch по любой — назови его первым: это критерий остановки, результат до починки не считается.
+   price_drift — приведи средний разрыв цены; это проскальзывание, не поломка.
 4. Сравни основной портфель с ожиданиями: доходность в % от депозитов, просадка, число сделок, доля
    полных сеток у шорта. Затем — параллельный комплект «Тейк 6%» против своих ожиданий и против основного шорта.
    Отдельно: сработал ли какой-то критерий остановки.

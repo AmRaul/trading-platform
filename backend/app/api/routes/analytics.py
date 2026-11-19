@@ -17,9 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.bybit_market_data import BybitMarketDataAdapter
 from app.api.deps import get_current_user
 from app.application.monitoring.bots_health import assess_bot
+from app.application.monitoring.reconcile_position import ReconcilePositionUseCase
 from app.core.database import get_db
 from app.domain.market.context import build_market_context
-from app.models import Bot, Position, Review, Trade, User
+from app.models import Bot, Order, Position, Review, Trade, User
 from app.schemas.trade import TradeResponse
 
 logger = logging.getLogger(__name__)
@@ -99,17 +100,20 @@ async def bots_health(
     now_ms = int(time.time() * 1000)
     rows = []
     for b in bots:
-        last = signal_scheduler.last_result.get(b.id)
+        # Проверка сигнала нужна только ждущему сигнал боту; у остальных она старая и сбивает с толку
+        last = signal_scheduler.last_result.get(b.id) if b.state == "SIGNAL" else None
+        tick = price_stream_manager.last_tick_ms.get(b.symbol)
         health = assess_bot(
             state=b.state, config=b.config or {}, has_open_position=b.id in open_ids,
             registered_for_prices=b.id in price_stream_manager.registered_bots,
             scheduler_running=signal_scheduler.running, scheduler_started_ms=signal_scheduler.started_ms,
-            last_check=last, now_ms=now_ms,
+            last_check=last, now_ms=now_ms, last_tick_ms=tick,
         )
         rows.append({
             "bot_id": b.id, "name": b.name, "symbol": b.symbol, "side": b.side,
             "exchange": b.exchange, "state": b.state, "has_open_position": b.id in open_ids,
             "last_signal_check": {**last, "minutes_ago": (now_ms - last["checked_at_ms"]) // 60_000} if last else None,
+            "last_price_tick_sec_ago": (now_ms - tick) // 1000 if tick and b.state != "SIGNAL" else None,
             **health,
         })
     return {
@@ -117,6 +121,23 @@ async def bots_health(
         "problems": sum(r["status"] == "problem" for r in rows),
         "bots": rows,
     }
+
+
+@router.get("/reconcile/{position_id}")
+async def reconcile_position(
+    position_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Сверка позиции с бэктестом на тех же свечах: сигнал входа, доборы, выход."""
+    position = await db.get(Position, position_id)
+    bot = await db.get(Bot, position.bot_id) if position else None
+    if not bot or bot.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Позиция не найдена")
+    orders = (await db.execute(select(Order).where(Order.position_id == position_id))).scalars().all()
+    trade = (await db.execute(select(Trade).where(Trade.position_id == position_id))).scalars().first()
+    return await ReconcilePositionUseCase(BybitMarketDataAdapter()).execute(
+        bot=bot, position=position, orders=orders, trade=trade)
 
 
 @router.get("/trades", response_model=List[TradeResponse])
