@@ -4,9 +4,78 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { botsApi, tradingApi, accountsApi, bybitAccountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
-import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Settings, Clock, X, Activity, ChevronDown, ChevronRight } from 'lucide-react';
 import { usePriceStore, usePositionStore } from '@/lib/store';
 import { wsClient } from '@/lib/websocket';
+
+type ExchangeTab = 'all' | 'paper' | 'bybit' | 'cryptorg';
+
+const EXCHANGE_TABS: { key: ExchangeTab; label: string }[] = [
+  { key: 'all', label: 'Все' },
+  { key: 'paper', label: 'Бумажные' },
+  { key: 'bybit', label: 'Bybit' },
+  { key: 'cryptorg', label: 'Cryptorg' },
+];
+
+const TAB_STORAGE_KEY = 'bots-exchange-tab';
+
+// Старые боты без exchange — Cryptorg (как и дефолт в форме редактирования)
+const botExchange = (bot: any): ExchangeTab => bot.exchange ?? 'cryptorg';
+
+const COLLAPSED_STORAGE_KEY = 'bots-collapsed-groups';
+const OTHER_GROUP = 'Отдельные боты';
+
+type BotGroup = { key: string; bots: any[] };
+
+// «Шорт альтов · … · Консервативный · SOLUSDT» → «Шорт альтов · … · Консервативный»
+const strategyOf = (bot: any): string => {
+  const suffix = ` · ${bot.symbol}`;
+  return bot.name.endsWith(suffix) ? bot.name.slice(0, -suffix.length) : bot.name;
+};
+
+// Боты одной стратегии — вместе; одиночные ручные боты (имя без « · ») — в «Отдельные боты», в конце
+function groupBots(list: any[]): BotGroup[] {
+  const byKey = new Map<string, any[]>();
+  for (const bot of list) {
+    let key = strategyOf(bot);
+    if (!key.includes(' · ') && list.filter((b) => strategyOf(b) === key).length < 2) key = OTHER_GROUP;
+    byKey.set(key, [...(byKey.get(key) ?? []), bot]);
+  }
+  const groups = Array.from(byKey, ([key, bots]) => ({ key, bots }));
+  return [...groups.filter((g) => g.key !== OTHER_GROUP), ...groups.filter((g) => g.key === OTHER_GROUP)];
+}
+
+// Внутри группы длинное имя стратегии не повторяем — в карточке только монета
+function cardTitle(bot: any, group: BotGroup): string {
+  if (group.key === OTHER_GROUP) return bot.name;
+  return bot.name === group.key ? bot.symbol : bot.name.slice(group.key.length + 3);
+}
+
+const money = (n: number) => `${n >= 0 ? '+' : '−'}$${Math.abs(n).toFixed(2)}`;
+
+function GroupHeader({ group, collapsed, onToggle }: { group: BotGroup; collapsed: boolean; onToggle: () => void }) {
+  const open = group.bots.filter((b) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
+  const realized = group.bots.reduce((sum, b) => sum + (b.total_pnl ?? 0), 0);
+  const unrealized = group.bots.reduce((sum, b) => sum + (b.open_position?.unrealized_pnl ?? 0), 0);
+  const tone = (n: number) => (n >= 0 ? 'text-green-400' : 'text-red-400');
+  return (
+    <button onClick={onToggle} className="w-full flex items-center gap-2 mb-2 text-left">
+      {collapsed ? <ChevronRight size={16} className="shrink-0 text-gray-500" /> : <ChevronDown size={16} className="shrink-0 text-gray-500" />}
+      <span className="font-semibold text-sm text-gray-200 truncate">{group.key}</span>
+      <span className="shrink-0 px-1.5 rounded text-xs bg-gray-800 text-gray-400">{group.bots.length}</span>
+      {open > 0 && <span className="shrink-0 text-xs text-green-400" title="В позиции">● {open}</span>}
+      <span className="flex-1 border-t border-gray-800 mx-1" />
+      {open > 0 && (
+        <span className={`shrink-0 text-xs ${tone(unrealized)}`} title="Текущий PnL открытых позиций">
+          {money(unrealized)} откр.
+        </span>
+      )}
+      <span className={`shrink-0 text-xs font-medium ${tone(realized)}`} title="Реализованный PnL">
+        {money(realized)}
+      </span>
+    </button>
+  );
+}
 
 export default function BotsPage() {
   const queryClient = useQueryClient();
@@ -146,6 +215,36 @@ export default function BotsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['bots'] }),
   });
 
+  const [tab, setTab] = useState<ExchangeTab>('all');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(TAB_STORAGE_KEY) as ExchangeTab | null;
+      if (saved && EXCHANGE_TABS.some((t) => t.key === saved)) setTab(saved);
+    } catch {}
+  }, []);
+  const selectTab = (key: ExchangeTab) => {
+    setTab(key);
+    try { localStorage.setItem(TAB_STORAGE_KEY, key); } catch {}
+  };
+  const inTab = (bot: any, key: ExchangeTab) => key === 'all' || botExchange(bot) === key;
+  const shownBots = (bots ?? []).filter((b: any) => inTab(b, tab));
+  const groups = groupBots(shownBots);
+
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COLLAPSED_STORAGE_KEY) ?? '[]');
+      if (Array.isArray(saved)) setCollapsed(saved);
+    } catch {}
+  }, []);
+  const toggleGroup = (key: string) => {
+    setCollapsed((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      try { localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+
   const handleEntry = (bot: any) => {
     entryMutation.mutate(bot.id);
   };
@@ -172,8 +271,38 @@ export default function BotsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {bots?.map((bot: any) => (
+        <div className="flex gap-1 mb-3 overflow-x-auto border-b border-gray-700">
+          {EXCHANGE_TABS.map(({ key, label }) => {
+            const list = (bots ?? []).filter((b: any) => inTab(b, key));
+            const open = list.filter((b: any) => b.state === 'PYRAMIDING' || b.state === 'STRADDLE').length;
+            const active = tab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => selectTab(key)}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 -mb-px border-b-2 text-sm transition-colors ${
+                  active ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {label}
+                <span className={`px-1.5 rounded text-xs ${active ? 'bg-blue-900 text-blue-200' : 'bg-gray-800 text-gray-400'}`}>
+                  {list.length}
+                </span>
+                {open > 0 && (
+                  <span className="text-xs text-green-400" title="В позиции">● {open}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="space-y-4">
+          {groups.map((g) => (
+          <section key={g.key}>
+          <GroupHeader group={g} collapsed={collapsed.includes(g.key)} onToggle={() => toggleGroup(g.key)} />
+          {!collapsed.includes(g.key) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+          {g.bots.map((bot: any) => (
             <div
               key={bot.id}
               className="bg-gray-800 rounded border border-gray-700 p-3"
@@ -193,7 +322,7 @@ export default function BotsPage() {
                   {bot.exchange === 'paper' && (
                     <span className="shrink-0 px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900 text-amber-300">Бумажный</span>
                   )}
-                  <span className="font-semibold text-sm truncate">{bot.name}</span>
+                  <span className="font-semibold text-sm truncate" title={bot.name}>{cardTitle(bot, g)}</span>
                 </div>
                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-xs ${
                   bot.state !== 'IDLE' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'
@@ -326,10 +455,14 @@ export default function BotsPage() {
               </div>
             </div>
           ))}
+          </div>
+          )}
+          </section>
+          ))}
 
-          {bots?.length === 0 && (
-            <div className="col-span-full text-center py-8 text-gray-500 border border-gray-700 rounded text-sm">
-              Нет ботов. Нажмите «Создать».
+          {bots && shownBots.length === 0 && (
+            <div className="text-center py-8 text-gray-500 border border-gray-700 rounded text-sm">
+              {bots.length === 0 ? 'Нет ботов. Нажмите «Создать».' : 'На этой площадке ботов нет.'}
             </div>
           )}
         </div>
