@@ -187,8 +187,8 @@ class PriceStreamManager:
                     logger.error(f"[PriceStream] strategy {bot_id} error: {e}")
 
     async def register_strategy(self, bot_id: int):
-        db = AsyncSessionLocal()
-        engine = StrategyEngine(bot_id, db)
+        # без сессии: движок открывает её сам на каждую операцию с БД
+        engine = StrategyEngine(bot_id)
         await engine.initialize()
         self.strategy_engines[bot_id] = engine
         self.registered_bots.add(bot_id)
@@ -205,7 +205,6 @@ class PriceStreamManager:
     def unregister_strategy(self, bot_id: int):
         engine = self.strategy_engines.pop(bot_id, None)
         if engine:
-            asyncio.create_task(engine.db.close())
             # Notify price-tracker to stop streaming if no other bot needs this symbol
             exchange = _price_feed(engine.bot)
             symbol = engine.bot.symbol

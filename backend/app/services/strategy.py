@@ -1,7 +1,10 @@
+import functools
+from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, inspect as sa_inspect
+from app.core.database import AsyncSessionLocal
 from app.models import Bot, Position, Order
 from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
@@ -32,14 +35,34 @@ class BotState(str, Enum):
     STRADDLE = "STRADDLE"  # конструкция straddle запущена (см. StraddleRunner)
 
 
+def _in_session(fn):
+    """Метод, которому нужна БД, получает сессию на время своей работы (см. StrategyEngine.session)."""
+    @functools.wraps(fn)
+    async def wrapper(self, *args, **kwargs):
+        async with self.session():
+            return await fn(self, *args, **kwargs)
+    return wrapper
+
+
 class StrategyEngine:
-    """Thin orchestrator — delegates all logic to use cases."""
+    """Thin orchestrator — delegates all logic to use cases.
+
+    Сессия БД. Движок из API/планировщика получает сессию запроса (db=...) и живёт
+    одну операцию. Движок зарегистрированного бота (price_stream_manager) живёт днями
+    и сессию не держит: каждая операция с БД (вход, добор, закрытие, шаг straddle)
+    открывает свою и прикрепляет к ней bot/position. Тик без событий БД не трогает —
+    стоп и PnL меняются в памяти и уходят в базу со следующей операцией, как и раньше.
+    После rollback объекты перечитываются из базы, а не остаются «протухшими».
+    """
 
     straddle = None  # StraddleRunner для bot_type=straddle
+    _fixed_db: Optional[AsyncSession] = None
+    _op_db: Optional[AsyncSession] = None
 
-    def __init__(self, bot_id: int, db: AsyncSession):
+    def __init__(self, bot_id: int, db: Optional[AsyncSession] = None):
         self.bot_id = bot_id
-        self.db = db
+        self._fixed_db = db
+        self._op_db = None
         self.bot: Optional[Bot] = None
         self.position: Optional[Position] = None
         self.calculator: Optional[PositionCalculator] = None
@@ -54,6 +77,47 @@ class StrategyEngine:
         self._market = BybitMarketDataAdapter()
         self._publisher = WebSocketPublisherAdapter()
 
+    @property
+    def db(self) -> AsyncSession:
+        db = self._fixed_db or self._op_db
+        if db is None:
+            raise RuntimeError(f"bot={self.bot_id}: обращение к БД вне операции (нужен StrategyEngine.session)")
+        return db
+
+    @db.setter
+    def db(self, value: AsyncSession) -> None:
+        self._fixed_db = value
+
+    def _tracked(self):
+        objs = [self.bot, self.position]
+        if self.straddle:
+            objs.extend(self.straddle.positions.values())
+        return [o for o in objs if o is not None]
+
+    @asynccontextmanager
+    async def session(self):
+        """Сессия на одну операцию. Вложенные вызовы и движок с сессией запроса — та же сессия."""
+        if self._fixed_db is not None or self._op_db is not None:
+            yield self.db
+            return
+        async with AsyncSessionLocal() as db:
+            for obj in self._tracked():
+                db.add(obj)  # прикрепить; несохранённые изменения (стоп, PnL) уйдут при commit
+            self._op_db = db
+            try:
+                yield db
+            finally:
+                try:
+                    for obj in self._tracked():
+                        state = sa_inspect(obj)
+                        if state.session is db.sync_session and state.expired_attributes:
+                            await db.refresh(obj)  # после rollback — состояние из базы
+                except Exception as e:
+                    logger.error(f"[SESSION] bot={self.bot_id} refresh after rollback failed: {e}")
+                finally:
+                    self._op_db = None
+
+    @_in_session
     async def initialize(self):
         result = await self.db.execute(select(Bot).where(Bot.id == self.bot_id))
         self.bot = result.scalar_one_or_none()
@@ -95,6 +159,7 @@ class StrategyEngine:
         for order in result.scalars().all():
             self.calculator.add_order(OrderInfo(order.order_number, order.price, order.size))
 
+    @_in_session
     async def manual_entry(self, account_balance: float = None) -> Dict:
         if self.straddle:
             return await self.straddle.launch()
@@ -114,6 +179,7 @@ class StrategyEngine:
             logger.error(f"Error in manual_entry: {e}")
             return {"success": False, "error": str(e)}
 
+    @_in_session
     async def set_limit_entry(self, limit_price: float) -> Dict:
         if self.straddle:
             return {"success": False, "error": "Straddle запускается только вручную"}
@@ -139,6 +205,7 @@ class StrategyEngine:
             logger.error(f"Error in set_limit_entry: {e}")
             return {"success": False, "error": str(e)}
 
+    @_in_session
     async def arm_signal_entry(self) -> Dict:
         if self.straddle:
             return {"success": False, "error": "Straddle запускается только вручную"}
@@ -168,6 +235,7 @@ class StrategyEngine:
             self.current_state = BotState.SIGNAL
         return result
 
+    @_in_session
     async def cancel_limit_entry(self) -> Dict:
         """Отменяет ожидание входа — и лимитного (WAITING), и по сигналу (SIGNAL)."""
         if self.current_state not in (BotState.WAITING, BotState.SIGNAL):
@@ -191,6 +259,7 @@ class StrategyEngine:
             logger.error(f"Error in cancel_limit_entry: {e}")
             return {"success": False, "error": str(e)}
 
+    @_in_session
     async def _execute_entry(self):
         if self._is_entering:
             return
@@ -217,7 +286,8 @@ class StrategyEngine:
 
     async def on_price_update(self, current_price: float):
         if self.straddle:
-            await self.straddle.on_price(current_price)
+            async with self.session():
+                await self.straddle.on_price(current_price)
             return
 
         # Handle WAITING state — check if limit price is hit
@@ -342,6 +412,7 @@ class StrategyEngine:
         await self._close_position(current_price, "EXCHANGE_CLOSED", send_to_exchange=False)
         return True
 
+    @_in_session
     async def _add_pyramiding_order(self, current_price: float):
         self._is_adding_order = True
         try:
@@ -358,6 +429,7 @@ class StrategyEngine:
         finally:
             self._is_adding_order = False
 
+    @_in_session
     async def _close_position(self, exit_price: float, exit_reason: str, send_to_exchange: bool = True):
         self._is_closing = True
         try:
@@ -376,6 +448,7 @@ class StrategyEngine:
         finally:
             self._is_closing = False
 
+    @_in_session
     async def manual_close(self) -> Dict:
         if self.straddle:
             return await self.straddle.manual_close()

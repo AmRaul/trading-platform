@@ -103,10 +103,11 @@ async def set_position_managed(
     await db.refresh(position)
 
     # If the bot is currently live (registered with the price stream), update
-    # the in-memory engine's position too — StrategyEngine holds its own
-    # long-lived DB session/object, so a plain DB commit here won't be seen
-    # by that session until it's asked to refresh. Single-threaded asyncio
-    # event loop, so this is race-free.
+    # the in-memory engine's position too — StrategyEngine keeps bot/position
+    # objects in memory between operations (it re-attaches them to a fresh
+    # session per DB operation, without reloading), so a plain DB commit here
+    # won't be seen by the engine. Single-threaded asyncio event loop, so this
+    # is race-free.
     from app.services.websocket import price_stream_manager
     engine = price_stream_manager.strategy_engines.get(position.bot_id)
     if engine and engine.position and engine.position.id == position.id:
