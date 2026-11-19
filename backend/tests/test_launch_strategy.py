@@ -125,6 +125,35 @@ async def test_launch_multi_coin_aggressive():
     assert all(b.config["entry_size_usdt"] == pytest.approx(500) for b in bots)
 
 
+@pytest.mark.asyncio
+async def test_launch_multi_coin_tp6():
+    """Параллельный комплект форвард-теста: тот же шорт, тейк 6% после полной сетки."""
+    req = LaunchRequest(variant_key="conservative_tp6", deposit_usdt=5000, exchange="paper")
+    bots = await launch_ready_strategy("alt-short-pyramid-5", req, _db(), _user())
+    assert len(bots) == 5
+    for b in bots:
+        assert b.config["tp_percent"] == 6.0
+        assert b.config["entry_size_usdt"] == pytest.approx(250)
+        assert b.config["sl_after_order3"] == 2.0 and b.config["use_trailing"] is True
+        assert b.name == f"Шорт альтов · пирамидинг · 5 монет · Тейк 6% · {b.symbol}"
+    assert {b.symbol: b.config["trailing_percent"] for b in bots}["LINKUSDT"] == 6.9
+
+
+def test_tp6_only_after_full_grid():
+    """Тейк пирамиды — только у полной позиции (4 ордера), как в бэктесте."""
+    from app.domain.ready_strategies.catalog import get_strategy
+    from app.domain.trading.entities import OrderInfo
+    from app.domain.trading.position_calculator import PositionCalculator
+    s = get_strategy("alt-short-pyramid-5")
+    v = next(v for v in s.variants if v.key == "conservative_tp6")
+    calc = PositionCalculator(s.variant_preset(v, s.legs[0]))
+    for n, price in enumerate((100.0, 99.5, 99.0), start=1):
+        calc.add_order(OrderInfo(n, price, 250))
+        assert calc.take_profit_price("SHORT") is None
+    calc.add_order(OrderInfo(4, 98.5, 250))
+    assert calc.take_profit_price("SHORT") == pytest.approx(calc.calculate_average_price(calc.orders) * 0.94)
+
+
 def test_catalog_backtests_load():
     from app.domain.ready_strategies.catalog import list_strategies
     from app.schemas.ready_strategy import ReadyStrategyBacktest
