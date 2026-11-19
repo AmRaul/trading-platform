@@ -1,8 +1,10 @@
 import { create } from 'zustand';
+import { setAccessToken } from './auth';
+import { authApi } from './api';
 
 interface User {
   username: string;
-  token: string;
+  token?: string;  // access-токен: уходит в память lib/auth, в localStorage не пишется
 }
 
 interface AuthState {
@@ -11,22 +13,31 @@ interface AuthState {
   logout: () => void;
 }
 
+function storedUser(): User | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const username = localStorage.getItem('username');
+    return username ? { username } : null;  // имя — для шапки; сессию подтверждает refresh
+  } catch {
+    return null;
+  }
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+  user: storedUser(),
   setUser: (user) => {
-    set({ user });
-    if (user) {
-      localStorage.setItem('token', user.token);
-      localStorage.setItem('username', user.username);
-    } else {
-      localStorage.removeItem('token');
-      localStorage.removeItem('username');
-    }
+    set({ user: user ? { username: user.username } : null });
+    setAccessToken(user?.token ?? null);
+    try {
+      if (user) localStorage.setItem('username', user.username);
+      else localStorage.removeItem('username');
+    } catch {}
   },
   logout: () => {
     set({ user: null });
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
+    setAccessToken(null);
+    try { localStorage.removeItem('username'); } catch {}
+    authApi.logout().catch(() => {});  // снять refresh-cookie на сервере
   },
 }));
 

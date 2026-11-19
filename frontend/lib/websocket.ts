@@ -1,4 +1,9 @@
+import { getAccessToken, onAccessTokenChange, setAccessToken } from './auth';
+
 type MessageHandler = (data: any) => void;
+
+// Сервер закрывает с этим кодом, если токен не принят — обновить и переподключиться
+const UNAUTHORIZED = 4401;
 
 class WebSocketClient {
   private ws: WebSocket | null = null;
@@ -14,9 +19,17 @@ class WebSocketClient {
   // to before it dropped.
   private subscribedSymbols: Set<string> = new Set();
   private subscribedBotIds: Set<number> = new Set();
+  private wanted = false;      // connect() вызван и disconnect() — нет
+  private connecting = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+    // не вошли — сокет не открываем; вошли (или токен обновился) — подключаемся
+    onAccessTokenChange((token) => {
+      if (token && this.wanted) this.connect();
+      if (!token) this.ws?.close();  // вышли / сессия кончилась — события больше не получаем
+    });
   }
 
   onReconnect(handler: () => void) {
@@ -24,15 +37,26 @@ class WebSocketClient {
     return () => this.reconnectHandlers.delete(handler);
   }
 
-  connect() {
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+  async connect() {
+    this.wanted = true;
+    if (this.connecting || this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
+    this.connecting = true;
+    let token: string | null;
+    try {
+      token = await getAccessToken();
+    } finally {
+      this.connecting = false;
+    }
+    if (!token || !this.wanted) return;  // ждём входа — onAccessTokenChange
 
     this.ws = new WebSocket(`${this.url}/api/ws`);
 
     this.ws.onopen = () => {
       console.log('WebSocket connected');
+      // первым сообщением — токен (не в URL: URL попадает в логи прокси)
+      this.ws?.send(JSON.stringify({ type: 'auth', token }));
       this.resubscribeAll();
       if (!this.isFirstConnect) {
         this.reconnectHandlers.forEach((h) => h());
@@ -58,9 +82,15 @@ class WebSocketClient {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      this.ws = null;
+      if (!this.wanted) return;
+      if (event.code === UNAUTHORIZED) {
+        setAccessToken(null);  // следующий connect() возьмёт новый через refresh
+      }
       console.log('WebSocket disconnected, reconnecting...');
-      setTimeout(() => this.connect(), this.reconnectInterval);
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectInterval);
     };
 
     this.ws.onerror = (error) => {
@@ -80,6 +110,8 @@ class WebSocketClient {
   }
 
   disconnect() {
+    this.wanted = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.ws) {
       this.ws.close();
       this.ws = null;

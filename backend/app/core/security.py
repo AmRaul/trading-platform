@@ -1,3 +1,4 @@
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -32,16 +33,34 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[dict]:
-    """Decode JWT token"""
+def password_fingerprint(hashed_password: str) -> str:
+    """Отпечаток хеша пароля в refresh-токене: сменил пароль — все refresh-токены недействительны."""
+    return hashlib.sha256(hashed_password.encode()).hexdigest()[:16]
+
+
+def create_refresh_token(username: str, hashed_password: str) -> str:
+    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    return jwt.encode({"sub": username, "exp": expire, "type": "refresh",
+                       "pv": password_fingerprint(hashed_password)},
+                      settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_token(token: str, expected_type: str = "access") -> Optional[dict]:
+    """Payload, если подпись и срок верны и тип совпадает. Токены до введения type — access."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        return payload
     except JWTError:
         return None
+    if payload.get("type", "access") != expected_type:
+        return None  # refresh-токен в заголовке Authorization не принимаем, и наоборот
+    return payload
+
+
+def decode_access_token(token: str) -> Optional[dict]:
+    return decode_token(token, "access")
