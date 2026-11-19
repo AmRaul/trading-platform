@@ -85,4 +85,25 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    """503, если боты не могут работать: БД, Redis, планировщик сигналов или поток цен."""
+    from sqlalchemy import text
+    from app.application.monitoring.system_health import system_health
+    from app.core.database import engine
+    from app.core.redis import get_redis
+    from app.services.signal_scheduler import signal_scheduler
+    from app.services.websocket import price_stream_manager
+
+    async def db_check():
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
+    async def redis_check():
+        await (await get_redis()).ping()
+
+    healthy, checks = await system_health(
+        db_check=db_check, redis_check=redis_check,
+        scheduler_running=signal_scheduler.running,
+        price_listener_alive=price_stream_manager.listener_alive,
+    )
+    return JSONResponse(status_code=200 if healthy else 503,
+                        content={"status": "healthy" if healthy else "unhealthy", "checks": checks})

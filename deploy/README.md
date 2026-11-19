@@ -39,6 +39,8 @@ Secrets:
 | KANDLE_MCP_USERNAME | логин kandle, от имени которого удалённый MCP читает ботов |
 | KANDLE_MCP_PASSWORD | пароль этого логина |
 | KANDLE_MCP_TOKEN | секрет в URL коннектора claude.ai (`/mcp/<token>`), ≥32 символов: `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` |
+| TELEGRAM_BOT_TOKEN | токен бота от @BotFather — алерты `trading_alerter` (пусто — алерты только в лог) |
+| TELEGRAM_CHAT_ID | твой chat id: написать боту, затем `https://api.telegram.org/bot<токен>/getUpdates` → `chat.id` |
 
 Generate passwords with `openssl rand -hex 24` (no `'` characters).
 When moving from the old server, reuse its DB/SECRET/ENCRYPTION values.

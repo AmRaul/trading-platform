@@ -114,6 +114,27 @@ services:
     depends_on:
       - backend
 
+  alerter:
+    # Telegram-алерты: /health и bots-health бэкенда раз в 5 минут. Отдельно от backend,
+    # чтобы сообщить и о его падении.
+    image: ${ALERTER_IMAGE:-ghcr.io/amraul/trading-platform-alerter:latest}
+    container_name: trading_alerter
+    restart: unless-stopped
+    environment:
+      - KANDLE_URL=http://backend:8000
+      - KANDLE_USERNAME=${KANDLE_MCP_USERNAME:-}
+      - KANDLE_PASSWORD=${KANDLE_MCP_PASSWORD:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    networks:
+      - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_alerter"
+    depends_on:
+      - backend
+
   signals-db:
     image: postgres:16-alpine
     container_name: trading_signals_db
