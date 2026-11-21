@@ -108,7 +108,7 @@ Frontend обращается к трём backend-URL напрямую из бр
 
 ### services/backtester/
 
-Отдельное Flask-приложение с CLI и веб-UI для бэктестинга стратегий (Long/Short DCA + martingale, EMA/RSI/ADX-фильтры, MRC — Mean Reversion Channel) на исторической OHLCV-истории через CCXT. Своя БД (`backtester`), свои миграции. Встроен также как страница внутри основного Next.js-фронтенда (`frontend/app/backtester`). Подробнее — `services/backtester/README.md`. В compose ограничен (1 ядро, 1.5 ГБ, низкий приоритет CPU), чтобы тяжёлый бэктест не тормозил ботов.
+Отдельное Flask-приложение с CLI и веб-UI для бэктестинга стратегий (Long/Short DCA + martingale, EMA/RSI/ADX-фильтры, MRC — Mean Reversion Channel) на исторической OHLCV-истории через CCXT. Своя БД (`backtester`), свои миграции. Встроен также как страница внутри основного Next.js-фронтенда (`frontend/app/backtester`). Подробнее — `services/backtester/README.md`. В compose ограничен (1 ядро, 1.5 ГБ, низкий приоритет CPU), чтобы тяжёлый бэктест не тормозил ботов. Бэктесты идут через очередь (`backtest_queue.py`): по одному за раз (`BACKTEST_MAX_PARALLEL`), скачивание данных — до двух (`DOWNLOAD_MAX_PARALLEL`), остальные ждут по порядку, место в очереди видно в статусе; оптимизации — своя очередь, по одной. Redis не нужен: бэктестер — один процесс.
 
 ### services/alerter/
 
@@ -120,7 +120,7 @@ Frontend обращается к трём backend-URL напрямую из бр
 
 ### services/mcp/
 
-kandle MCP — сервер Model Context Protocol поверх `/api/analytics`: Claude (CLI, claude.ai, мобильный — через `kandle.tech/mcp/<token>`) видит ботов, сделки, контекст рынка и позиции, ведёт журнал разборов (health_check, monthly_review, second_opinion). `what_changed` — что изменилось с прошлой проверки (снимки состояния в `state_snapshots`), `forward_test_sets` — комплекты форвард-теста с ожиданиями, `get_position_context` — с уровнями позиции (результат на стопе/тейке с комиссией, когда трейлинг двинет стоп, следующий ордер). Бумажных ботов форвард-теста MCP не трогает.
+kandle MCP — сервер Model Context Protocol поверх `/api/analytics`: Claude (CLI, claude.ai, мобильный — через `kandle.tech/mcp/<token>`) видит ботов, сделки, контекст рынка и позиции, ведёт журнал разборов (health_check, monthly_review, second_opinion). `what_changed` — что изменилось с прошлой проверки (снимки состояния в `state_snapshots`), `forward_test_sets` — комплекты форвард-теста с ожиданиями, `reconcile_trades` — сверка всех сделок периода с бэктестом одной сводкой, `account_overview` — счёт Cryptorg (все позиции и сделки, включая ручные), `get_position_context` — с уровнями позиции (результат на стопе/тейке с комиссией, когда трейлинг двинет стоп, следующий ордер). Бумажных ботов форвард-теста MCP не трогает.
 
 **Комплекты форвард-теста** — поле бота `forward_test` (`portfolio/mrc`, `portfolio/short`, `take6/short`); ожидания и критерии остановки — `backend/app/domain/forward_test.py` (цифры из `TODO/7`, записаны до старта). Переименование бота разбор не ломает. Подробнее — `services/mcp/README.md`, планы — `TODO/8`.
 

@@ -76,7 +76,7 @@ jobs:
           cache: pip
           cache-dependency-path: services/backtester/requirements.txt
       - run: pip install -r services/backtester/requirements.txt
-      - run: cd services/backtester && pytest test_indicators.py -q
+      - run: cd services/backtester && pytest test_indicators.py test_backtest_queue.py -q
 
   test-mcp:
     name: Tests · kandle-mcp
