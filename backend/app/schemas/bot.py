@@ -151,6 +151,15 @@ class BotCreate(BaseModel):
         return v
 
 
+def _check_forward_test(v):
+    from app.domain.forward_test import parse, valid_values
+    if v in (None, ""):
+        return None
+    if parse(v) is None:
+        raise ValueError(f"forward_test: одно из {valid_values()} или пусто")
+    return v
+
+
 class BotUpdate(BaseModel):
     name: Optional[str] = None
     symbol: Optional[str] = None
@@ -160,6 +169,12 @@ class BotUpdate(BaseModel):
     exchange: Optional[str] = Field(default=None, pattern="^(cryptorg|bybit|paper)$")
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
+    # "" — снять бота с форвард-теста
+    forward_test: Optional[str] = None
+
+    @validator('forward_test')
+    def validate_forward_test(cls, v):
+        return "" if v == "" else _check_forward_test(v)
 
 
 class BotResponse(BaseModel):
@@ -175,6 +190,7 @@ class BotResponse(BaseModel):
     account_id: Optional[int] = None
     bybit_account_id: Optional[int] = None
     limit_entry_price: Optional[float] = None
+    forward_test: Optional[str] = None
     # straddle: состояние конструкции + виртуальная пара (live из Redis, иначе из БД)
     straddle: Optional[dict] = None
     created_at: datetime

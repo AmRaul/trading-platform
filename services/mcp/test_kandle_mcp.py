@@ -36,8 +36,14 @@ CTX = {"symbol": "SOLUSDT", "price": 98.0, "atr14": 4.0, "regime": "down"}
 class FakeAPI:
     def __init__(self):
         self.posted = []
+        self.calls = []
 
     async def get(self, path, **params):
+        self.calls.append((path, params))
+        if path == "/api/analytics/changes":
+            return {"events": {}}
+        if path.startswith("/api/analytics/position-levels/"):
+            return {"stop": {"net_usdt": -21.0}}
         if path == "/api/bots/":
             return BOTS
         if path == "/api/analytics/trades":
@@ -70,7 +76,8 @@ def run(coro):
 def test_server_registers_tools_and_prompts():
     tools = {t.name for t in run(km.mcp.list_tools())}
     assert tools == {"bots_health", "list_bots", "get_trades", "portfolio_summary", "get_market_context",
-                     "get_position_context", "reconcile_position", "log_review", "list_reviews"}
+                     "get_position_context", "reconcile_position", "log_review", "list_reviews",
+                     "what_changed", "forward_test_sets"}
     prompts = {p.name for p in run(km.mcp.list_prompts())}
     assert prompts == {"health_check", "monthly_review", "second_opinion"}
 
@@ -113,9 +120,24 @@ def test_second_opinion_requires_checkable_verdict(fake_api):
     assert path == "/api/analytics/reviews" and body["symbol"] == "SOLUSDT" and body["verdict"] == v
 
 
-def test_monthly_review_prompt_carries_expectations():
+def test_monthly_review_prompt_takes_expectations_from_sets():
+    """Ожидания больше не зашиты в промпт: они в forward_test_sets, комплект — поле бота."""
     text = km.monthly_review("2026-11-18", "2026-12-18")
-    assert "15.8%" in text and "$2 140" in text and 'until="2026-12-18"' in text
+    assert "forward_test_sets()" in text and 'until="2026-12-18"' in text
+    assert "forward_test:portfolio/short" in text and "forward_test:take6/short" in text
+
+
+def test_strategy_group_prefers_forward_test_over_name():
+    renamed = {"name": "любое новое имя", "symbol": "SOLUSDT", "forward_test": "portfolio/short"}
+    manual = {"name": "Шорт · SOLUSDT", "symbol": "SOLUSDT", "forward_test": None}
+    assert km._strategy_group(renamed) == "forward_test:portfolio/short"
+    assert km._strategy_group(manual) == "Шорт"
+
+
+def test_what_changed_passes_remember_flag(fake_api):
+    run(km.what_changed(since="2026-11-20", remember=False))
+    path, params = fake_api.calls[-1]
+    assert path == "/api/analytics/changes" and params == {"since": "2026-11-20", "save": "false"}
 
 
 def test_http_path_requires_long_token():

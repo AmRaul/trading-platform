@@ -113,6 +113,16 @@ class OpenPositionUseCase:
 
         logger.info(f"Position opened: bot={bot.id} {order_size_usdt} USDT @ {current_price}")
 
+        await self.publisher.publish("position_opened", {
+            "bot_id": bot.id,
+            "symbol": bot.symbol,
+            "side": bot.side,
+            "price": current_price,
+            "size": order_size_usdt,
+            "sl": sl_price or None,
+            "position_id": position.id,
+        })
+
         return {
             "success": True,
             "order_id": order.id,

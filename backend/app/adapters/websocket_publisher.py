@@ -21,3 +21,9 @@ class WebSocketPublisherAdapter:
             await _get_manager().broadcast_event(event_type, data)
         except Exception as e:
             logger.error(f"Error publishing event {event_type}: {e}")
+        try:
+            # вход/добор/выход — ещё и в Telegram; notify не ждёт отправки
+            from app.services.telegram_notifier import notifier
+            notifier.notify(event_type, data)
+        except Exception as e:
+            logger.error(f"Error notifying {event_type}: {e}")

@@ -260,6 +260,68 @@ class BybitExecutorAdapter:
                 value += qty * float(row.get("avgPrice") or 0)
         return size, (value / size if size else 0.0)
 
+    async def account_overview(self, days: int = 30, now_ms: Optional[int] = None) -> Dict:
+        """Всё, что видно на счёте: открытые позиции (включая ручные) и закрытые сделки
+        за days дней (Bybit closed-pnl, окнами по 7 дней — больше API за раз не отдаёт).
+        Только чтение. Ошибка API — {"ok": False, "error"}."""
+        import time as _time
+        now_ms = now_ms or int(_time.time() * 1000)
+        week = 7 * 24 * 3600 * 1000
+        try:
+            pos_resp = await self._run(lambda: self._client.get_positions(category="linear", settleCoin="USDT"))
+            if pos_resp.get("retCode") != 0:
+                return {"ok": False, "error": pos_resp.get("retMsg")}
+            positions = []
+            for r in pos_resp.get("result", {}).get("list", []):
+                if not r.get("size") or float(r["size"]) <= 0:
+                    continue
+                positions.append({
+                    "symbol": r["symbol"], "side": "LONG" if r.get("side") == "Buy" else "SHORT",
+                    "size": float(r["size"]), "avg_price": float(r.get("avgPrice") or 0),
+                    "mark_price": float(r.get("markPrice") or 0), "value_usdt": float(r.get("positionValue") or 0),
+                    "unrealized_pnl": float(r.get("unrealisedPnl") or 0), "leverage": r.get("leverage"),
+                    "liq_price": float(r.get("liqPrice") or 0) or None,
+                    "stop_loss": float(r.get("stopLoss") or 0) or None,
+                    "take_profit": float(r.get("takeProfit") or 0) or None,
+                    "opened_at_ms": int(r.get("createdTime") or 0) or None,
+                })
+
+            closed = []
+            end = now_ms
+            start_limit = now_ms - days * 24 * 3600 * 1000
+            while end > start_limit:
+                start = max(start_limit, end - week)
+                cursor = None
+                for _ in range(20):  # страницы по 100 внутри окна
+                    kw = {"category": "linear", "startTime": start, "endTime": end, "limit": 100}
+                    if cursor:
+                        kw["cursor"] = cursor
+                    resp = await self._run(lambda kw=kw: self._client.get_closed_pnl(**kw))
+                    if resp.get("retCode") != 0:
+                        return {"ok": False, "error": resp.get("retMsg")}
+                    result = resp.get("result", {})
+                    for r in result.get("list", []):
+                        closed.append({
+                            "symbol": r["symbol"],
+                            # side в closed-pnl — сторона ЗАКРЫВАЮЩЕГО ордера: Sell закрывает лонг
+                            "side": "LONG" if r.get("side") == "Sell" else "SHORT",
+                            "qty": float(r.get("qty") or 0),
+                            "entry_price": float(r.get("avgEntryPrice") or 0),
+                            "exit_price": float(r.get("avgExitPrice") or 0),
+                            "value_usdt": float(r.get("cumEntryValue") or 0),
+                            "pnl": float(r.get("closedPnl") or 0),
+                            "leverage": r.get("leverage"),
+                            "closed_at_ms": int(r.get("updatedTime") or r.get("createdTime") or 0),
+                        })
+                    cursor = result.get("nextPageCursor")
+                    if not cursor:
+                        break
+                end = start
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+        closed.sort(key=lambda c: -c["closed_at_ms"])
+        return {"ok": True, "positions": positions, "closed": closed, "days": days}
+
     async def check_key(self) -> Dict:
         """Проверка ключа: работает ли, только ли чтение, какие позиции видны."""
         try:

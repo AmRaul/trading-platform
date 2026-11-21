@@ -65,13 +65,14 @@ Frontend обращается к трём backend-URL напрямую из бр
 - **Неподтверждённое закрытие** — если биржа говорит, что позиция ещё открыта, сделка у нас не закрывается: бот повторяет закрытие каждые 15 с (даже если цена вернулась — выход уже решён) и до тех пор ничего не добирает. Неисполненный добор повторяется не раньше чем через 60 с
 - **Позиция-сирота** (`services/exchange_watch.py`) — раз в 2 мин для реальных ботов без позиции читается биржа; позиция без бота, увиденная две проверки подряд, — проблема в bots-health. Сторож ничего не закрывает
 - **Проблемы исполнения → Telegram** — неподтверждённые вход/добор/закрытие и сироты попадают в `issues` `/api/analytics/bots-health` (`services/exchange_issues.py`), alerter шлёт их в Telegram
+- **Уведомления о сделках → Telegram** (`services/telegram_notifier.py`) — вход, добор, выход (с PnL и причиной), конец straddle, в момент события; бумажные помечены 📝. Отправка отдельной задачей — торговый цикл её не ждёт. `TELEGRAM_NOTIFY`: `all` (по умолчанию) / `real` (без бумажных) / `off`; бот и чат — те же, что у алертера
 - **Realtime** — `price_stream_manager` слушает Redis pub/sub от price-tracker и раздаёт цены ботам. У каждого бота своя очередь (`EngineWorker`): бот, ждущий биржу, не задерживает стопы остальных; пока он занят, промежуточные цены заменяются последней. При обрыве Redis слушатель переподключается и переподписывается; при рестарте `restore_active_strategies()` поднимает активные стратегии из БД
 - **Сессии БД** — движок бота живёт днями, но соединение с БД не держит: каждая операция (вход, добор, закрытие, шаг straddle) открывает свою сессию; тик без событий базу не трогает. Проверяется интеграционным тестом на настоящем Postgres (`backend/integration/engine_session.py`, в CI)
 - **Авторизация** — access-токен JWT на 30 мин (только в памяти вкладки) + refresh-токен на 30 дней в httpOnly-cookie `kandle_refresh` (`POST /api/auth/refresh`, ротация при каждом обновлении). Смена пароля отзывает все refresh-токены. WebSocket `/api/ws` требует первым сообщением `{"type":"auth","token":...}` (иначе закрытие с кодом 4401); события бота уходят только его владельцу
 - **Health** — `GET /health` честный: БД, Redis, планировщик сигналов, поток цен; при сбое — 503. `GET /api/analytics/bots-health` — по каждому боту: идут ли тики, проверяется ли сигнал, проблемы исполнения
 - Слоистая архитектура: `api/routes` (HTTP) → `services/strategy.py` (оркестратор) → `application/trading/*` (use cases: open/close/add order) → `domain/trading/*` (чистая логика расчётов)
 
-Основные группы роутов (`backend/app/api/routes/`): `auth`, `bots`, `trading` (вход/выход/лимитные ордера), `positions`, `trades`, `accounts` (Cryptorg-аккаунты, `POST /{id}/check` — проверка ключа Bybit), `bybit-accounts` (Bybit-аккаунты), `analytics` (bots-health, контекст рынка, сделки, сверка с бэктестом, журнал разборов — API под kandle MCP), `admin` (статистика, пользователи, все боты, health-check сервисов — доступ только для `ADMIN_USERNAME`), `ready-strategies` (каталог готовых стратегий из `domain/ready_strategies/catalog.py` с вариантами риска, результаты бэктеста — JSON, генерируемый `services/backtester/research/`; `POST /{slug}/launch` — запуск в один клик: бот из пресета варианта, первый ордер = депозит × % варианта, сразу в состоянии `SIGNAL`), `websocket` (`/api/ws` — live цены/PnL/SL). Файлы `profile.py`, `signals.py`, `trend_signals.py` — устаревшие и в `main.py` не подключены.
+Основные группы роутов (`backend/app/api/routes/`): `auth`, `bots`, `trading` (вход/выход/лимитные ордера), `positions`, `trades`, `accounts` (Cryptorg-аккаунты, `POST /{id}/check` — проверка ключа Bybit, `GET /{id}/exchange` — счёт глазами биржи), `bybit-accounts` (Bybit-аккаунты), `analytics` (bots-health, контекст рынка, сделки, сверка с бэктестом, журнал разборов, `changes` — что изменилось с прошлой проверки, `forward-test` — комплекты форвард-теста, `position-levels/{bot_id}` — уровни позиции; API под kandle MCP), `admin` (статистика, пользователи, все боты, health-check сервисов — доступ только для `ADMIN_USERNAME`), `ready-strategies` (каталог готовых стратегий из `domain/ready_strategies/catalog.py` с вариантами риска, результаты бэктеста — JSON, генерируемый `services/backtester/research/`; `POST /{slug}/launch` — запуск в один клик: бот из пресета варианта, первый ордер = депозит × % варианта, сразу в состоянии `SIGNAL`), `websocket` (`/api/ws` — live цены/PnL/SL). Файлы `profile.py`, `signals.py`, `trend_signals.py` — устаревшие и в `main.py` не подключены.
 
 #### Cryptorg: webhook + проверка через Bybit
 
@@ -88,7 +89,7 @@ Frontend обращается к трём backend-URL напрямую из бр
 - **закрытие** — успех, только когда позиции не осталось;
 - **webhook ответил ошибкой, а позиция на бирже есть** — это исполнение, второй вход бот не откроет.
 
-Без ключа Cryptorg работает вслепую: ответ 200 считается исполнением, сверки нет (пометка в bots-health). Кнопка «Проверить ключ» на странице `accounts` показывает, работает ли ключ, только ли чтение и какие позиции видны.
+Без ключа Cryptorg работает вслепую: ответ 200 считается исполнением, сверки нет (пометка в bots-health). Кнопка «Проверить ключ» на странице `accounts` показывает, работает ли ключ, только ли чтение и какие позиции видны. Страница **«Счёт»** (`accounts/{id}`) — все открытые позиции и закрытые сделки счёта за 7/30/90 дней (closed PnL Bybit), включая ручные и других ботов Cryptorg, с пометкой, какой бот вёл сделку. Только просмотр.
 
 Ключ видит **все** позиции счёта, включая ручные. Ручная позиция на той же монете и стороне, что и бот без позиции, заблокирует вход бота и через ~4 мин даст алерт «позиция без бота». Ручную торговлю лучше вести на отдельном счёте Bybit-ликвидности. В настройках бота Cryptorg выключить «Открывать сделки в непрерывном режиме».
 
@@ -117,7 +118,9 @@ Frontend обращается к трём backend-URL напрямую из бр
 
 ### services/mcp/
 
-kandle MCP — сервер Model Context Protocol поверх `/api/analytics`: Claude (CLI, claude.ai, мобильный — через `kandle.tech/mcp/<token>`) видит ботов, сделки, контекст рынка и позиции, ведёт журнал разборов (health_check, monthly_review, second_opinion). Бумажных ботов форвард-теста MCP не трогает. Подробнее — `services/mcp/README.md`, планы — `TODO/8`.
+kandle MCP — сервер Model Context Protocol поверх `/api/analytics`: Claude (CLI, claude.ai, мобильный — через `kandle.tech/mcp/<token>`) видит ботов, сделки, контекст рынка и позиции, ведёт журнал разборов (health_check, monthly_review, second_opinion). `what_changed` — что изменилось с прошлой проверки (снимки состояния в `state_snapshots`), `forward_test_sets` — комплекты форвард-теста с ожиданиями, `get_position_context` — с уровнями позиции (результат на стопе/тейке с комиссией, когда трейлинг двинет стоп, следующий ордер). Бумажных ботов форвард-теста MCP не трогает.
+
+**Комплекты форвард-теста** — поле бота `forward_test` (`portfolio/mrc`, `portfolio/short`, `take6/short`); ожидания и критерии остановки — `backend/app/domain/forward_test.py` (цифры из `TODO/7`, записаны до старта). Переименование бота разбор не ломает. Подробнее — `services/mcp/README.md`, планы — `TODO/8`.
 
 ## Frontend
 
@@ -131,6 +134,7 @@ Next.js 14 (App Router) + TypeScript + Tailwind + TanStack Query.
 | `positions` | Live-мониторинг открытых позиций (цена, avg price, SL, unrealized PnL) |
 | `history` | История закрытых сделок, win rate |
 | `accounts` | Cryptorg-аккаунты: webhook URL, ключ Bybit для сверки, «Проверить ключ» |
+| `accounts/[id]` | Счёт Cryptorg на бирже: все позиции и закрытые сделки (включая ручные), кто их вёл |
 | `bybit-accounts` | CRUD Bybit-аккаунтов (API key/secret, testnet) |
 | `admin`, `admin/users`, `admin/bots`, `admin/health` | Админка: общая статистика, пользователи, все боты, состояние сервисов |
 | `screener` | Кандидаты со скринера (`services/signals`) |

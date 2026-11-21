@@ -23,6 +23,8 @@ class Bot(Base):
     limit_entry_price = Column(Float, nullable=True)
     # Состояние конструкции straddle (StraddleState.to_dict) — переживает рестарт бэкенда
     runtime_state = Column(JSON, nullable=True)
+    # Комплект бумажного форвард-теста "<комплект>/<часть>" (app/domain/forward_test.py); None — вне теста
+    forward_test = Column(String, nullable=True)
 
     # Stats
     total_pnl = Column(Float, default=0.0)

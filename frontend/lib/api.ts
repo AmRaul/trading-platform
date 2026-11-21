@@ -205,7 +205,31 @@ export const accountsApi = {
   delete: (id: number) => api.delete(`/api/accounts/${id}`),
   // ключ Bybit счёта «Bybit-ликвидность»: работает ли и какие позиции видны
   check: (id: number) => api.post<AccountCheck>(`/api/accounts/${id}/check`),
+  // счёт глазами биржи: все позиции и закрытые сделки, включая ручные
+  exchange: (id: number, days = 30) => api.get<AccountExchange>(`/api/accounts/${id}/exchange`, { params: { days } }),
 };
+
+export interface AccountBotRef { bot_id: number; name: string }
+
+export interface AccountExchange {
+  ok: boolean;
+  error?: string;
+  days?: number;
+  account?: { id: number; name: string };
+  positions?: {
+    symbol: string; side: 'LONG' | 'SHORT'; size: number; avg_price: number; mark_price: number;
+    value_usdt: number; unrealized_pnl: number; leverage?: string; liq_price: number | null;
+    stop_loss: number | null; take_profit: number | null; opened_at_ms: number | null; bot: AccountBotRef | null;
+  }[];
+  closed?: {
+    symbol: string; side: 'LONG' | 'SHORT'; qty: number; entry_price: number; exit_price: number;
+    value_usdt: number; pnl: number; leverage?: string; closed_at_ms: number; bot: AccountBotRef | null;
+  }[];
+  summary?: {
+    open_positions: number; open_unrealized_pnl: number;
+    closed: { count: number; pnl: number; by_bots: { count: number; pnl: number }; not_bots: { count: number; pnl: number } };
+  };
+}
 
 export interface AccountCheck {
   ok: boolean;
