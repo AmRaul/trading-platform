@@ -9,6 +9,7 @@ import { Play, Clock, ChevronDown, ChevronUp, Code2, Download } from 'lucide-rea
 interface BacktestStatus {
   task_id: string;
   status: 'pending' | 'running' | 'completed' | 'error';
+  queue_position?: number | null;  // место в очереди бэктестера (1 — следующий)
   progress: number;
   start_time: string;
   error?: string;
@@ -1211,9 +1212,9 @@ export default function BacktesterPage() {
                     status.status === 'error' ? 'bg-red-900 text-red-300' :
                     'bg-yellow-900 text-yellow-300'
                   }`}>
-                    {status.status.toUpperCase()}
+                    {status.queue_position ? `В ОЧЕРЕДИ · ${status.queue_position}` : status.status.toUpperCase()}
                   </span>
-                  {isRunning && <ElapsedTimer startTime={status.start_time} />}
+                  {isRunning && !status.queue_position && <ElapsedTimer startTime={status.start_time} />}
                   {isRunning && <span className="text-xs text-gray-400">{status.progress}%</span>}
                   {status.status === 'error' && (
                     <span className="text-red-400 text-sm">{status.error}</span>

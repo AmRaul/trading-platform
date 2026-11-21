@@ -321,6 +321,44 @@ async def reconcile_position(position_id: int) -> Dict:
     return r
 
 
+@mcp.tool(annotations=READ)
+async def reconcile_trades(since: Optional[str] = None, until: Optional[str] = None,
+                           exchange: Optional[str] = "paper") -> Dict:
+    """Сверка с бэктестом ВСЕХ закрытых сделок за период одной сводкой (вместо reconcile_position
+    по одной): verdicts — сколько match / price_drift / mismatch / manual; средний и максимальный
+    разрыв цены ордеров и выхода, %; not_match — сделки не-match с причинами.
+    mismatch — критерий остановки 4 форвард-теста. since/until — ISO-дата UTC.
+    По умолчанию — бумажные боты; exchange=None — все."""
+    r = await api.get("/api/analytics/reconcile-batch", since=since, until=until, exchange=exchange)
+    r.pop("candle_fetches", None)
+    return r
+
+
+@mcp.tool(annotations=READ)
+async def account_overview(account_id: Optional[int] = None, days: int = 30) -> Dict:
+    """Счёт Cryptorg глазами биржи (ключ Bybit «только чтение»): все открытые позиции
+    и закрытые сделки за days дней, включая ручные и других ботов Cryptorg; у каждой —
+    какой бот её ведёт/вёл (bot=None — не наш бот). PnL закрытых — как считает Bybit.
+    Без account_id — по всем аккаунтам Cryptorg с ключом. Только чтение."""
+    accounts = await api.get("/api/accounts/")
+    if account_id is not None:
+        accounts = [a for a in accounts if a["id"] == account_id]
+        if not accounts:
+            raise ToolError(f"Аккаунт {account_id} не найден")
+    out = {}
+    for a in accounts:
+        if not (a.get("has_api_key") and a.get("has_api_secret")):
+            out[a["name"]] = {"ok": False, "error": "ключ Bybit не задан — счёт не виден"}
+            continue
+        data = await api.get(f"/api/accounts/{a['id']}/exchange", days=days)
+        for p in data.get("positions", []):
+            p["opened_at"] = _iso(p.pop("opened_at_ms", None))
+        for c in data.get("closed", []):
+            c["closed_at"] = _iso(c.pop("closed_at_ms", None))
+        out[a["name"]] = data
+    return {"accounts": out}
+
+
 @mcp.tool()
 async def log_review(kind: str, summary: str, bot_id: Optional[int] = None, position_id: Optional[int] = None,
                      symbol: Optional[str] = None, verdict: Optional[Dict[str, Any]] = None) -> Dict:
@@ -379,9 +417,9 @@ def monthly_review(since: str, until: Optional[str] = None) -> str:
 2. portfolio_summary(since="{since}"{f', until="{until}"' if until else ''}, exchange="paper") — группы
    «forward_test:portfolio/mrc», «forward_test:portfolio/short», «forward_test:take6/short».
 3. get_market_context("BTCUSDT", "1d") — режим BTC (объясняет активность MRC).
-3a. Сверка с бэктестом (критерий 4): reconcile_position для закрытых сделок периода (get_trades,
-   поле position_id) — все, если их ≤ 15, иначе 10 последних + все с выходом не по SL_HIT.
-   mismatch по любой — назови его первым: это критерий остановки, результат до починки не считается.
+3a. Сверка с бэктестом (критерий 4): reconcile_trades(since="{since}"{f', until="{until}"' if until else ''})
+   — все закрытые сделки периода одной сводкой. mismatch по любой — назови его первым: это критерий
+   остановки, результат до починки не считается (детали — reconcile_position по position_id из not_match).
    price_drift — приведи средний разрыв цены; это проскальзывание, не поломка.
 4. Сравни основной портфель с ожиданиями: доходность в % от депозитов, просадка, число сделок, доля
    полных сеток у шорта. Затем — take6 против своих ожиданий и против portfolio/short.

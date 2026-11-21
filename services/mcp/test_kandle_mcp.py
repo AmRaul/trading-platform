@@ -42,6 +42,14 @@ class FakeAPI:
         self.calls.append((path, params))
         if path == "/api/analytics/changes":
             return {"events": {}}
+        if path == "/api/analytics/reconcile-batch":
+            return {"trades": 2, "verdicts": {"match": 2}, "candle_fetches": 1}
+        if path == "/api/accounts/":
+            return [{"id": 1, "name": "Main", "has_api_key": True, "has_api_secret": True},
+                    {"id": 2, "name": "NoKey", "has_api_key": False, "has_api_secret": False}]
+        if path == "/api/accounts/1/exchange":
+            return {"ok": True, "positions": [{"symbol": "SOLUSDT", "opened_at_ms": 1795000000000}],
+                    "closed": [{"symbol": "ETHUSDT", "closed_at_ms": 1795000000000}]}
         if path.startswith("/api/analytics/position-levels/"):
             return {"stop": {"net_usdt": -21.0}}
         if path == "/api/bots/":
@@ -77,7 +85,7 @@ def test_server_registers_tools_and_prompts():
     tools = {t.name for t in run(km.mcp.list_tools())}
     assert tools == {"bots_health", "list_bots", "get_trades", "portfolio_summary", "get_market_context",
                      "get_position_context", "reconcile_position", "log_review", "list_reviews",
-                     "what_changed", "forward_test_sets"}
+                     "what_changed", "forward_test_sets", "reconcile_trades", "account_overview"}
     prompts = {p.name for p in run(km.mcp.list_prompts())}
     assert prompts == {"health_check", "monthly_review", "second_opinion"}
 
@@ -167,3 +175,18 @@ def test_reconcile_position_formats_times():
     assert r["verdict"] == "match"
     assert r["entry_signal"]["signal_candle_close"] == "2026-11-18 11:15:00"
     assert r["orders"][0]["live_time"] == "2026-11-18 11:15:06" and "live_time_ms" not in r["orders"][0]
+
+
+def test_reconcile_trades_hides_internals(fake_api):
+    r = run(km.reconcile_trades(since="2026-11-18"))
+    assert r == {"trades": 2, "verdicts": {"match": 2}}
+    assert fake_api.calls[-1] == ("/api/analytics/reconcile-batch", {"since": "2026-11-18", "until": None, "exchange": "paper"})
+
+
+def test_account_overview_reads_accounts_with_key_and_formats_time(fake_api):
+    r = run(km.account_overview())
+    main = r["accounts"]["Main"]
+    assert main["positions"][0]["opened_at"].startswith("2026-") and "opened_at_ms" not in main["positions"][0]
+    assert main["closed"][0]["closed_at"].startswith("2026-")
+    assert r["accounts"]["NoKey"]["ok"] is False
+    assert "monthly_review" and "reconcile_trades(" in km.monthly_review("2026-11-18")

@@ -41,6 +41,11 @@ from database import (
 
 # Optimization modules
 from optimization_queue import global_optimization_queue
+from backtest_queue import FairSlots
+
+# Не больше N бэктестов и скачиваний одновременно, остальные ждут по порядку (backtest_queue.py)
+backtest_slots = FairSlots(int(os.environ.get('BACKTEST_MAX_PARALLEL', '1')))
+download_slots = FairSlots(int(os.environ.get('DOWNLOAD_MAX_PARALLEL', '2')))
 from functools import wraps
 
 # Live signal generator
@@ -145,11 +150,19 @@ class DataDownloadTask:
         self.start_time = datetime.now()
 
 def run_backtest_async(task_id, config):
-    """Запускает бэктест в отдельном потоке"""
+    """Запускает бэктест в отдельном потоке — когда подойдёт очередь (статус до этого 'pending')"""
     task = running_backtests[task_id]
+    backtest_slots.acquire(task_id)
+    try:
+        _run_backtest(task, task_id, config)
+    finally:
+        backtest_slots.release()
 
+
+def _run_backtest(task, task_id, config):
     try:
         task.status = 'running'
+        task.start_time = datetime.now()  # время счёта — с выхода из очереди
 
         # Создаем бэктестер
         backtester = Backtester(config_dict=config)
@@ -178,7 +191,15 @@ def run_backtest_async(task_id, config):
         print(f"Ошибка в бэктесте {task_id}: {e}")
 
 def download_data_async(task_id, params):
-    """Загружает данные с биржи в отдельном потоке"""
+    """Загружает данные с биржи в отдельном потоке — когда подойдёт очередь"""
+    download_slots.acquire(task_id)
+    try:
+        _download_data(task_id, params)
+    finally:
+        download_slots.release()
+
+
+def _download_data(task_id, params):
     task = data_downloads[task_id]
 
     try:
@@ -389,10 +410,12 @@ def run_backtest():
         thread.daemon = True
         thread.start()
         
+        position = backtest_slots.position(task_id)
         return jsonify({
             'task_id': task_id,
             'status': 'started',
-            'message': 'Бэктест запущен'
+            'queue_position': position,
+            'message': f'Бэктест в очереди, позиция {position}' if position else 'Бэктест запущен'
         })
         
     except Exception as e:
@@ -410,7 +433,9 @@ def get_backtest_status(task_id):
         'task_id': task_id,
         'status': task.status,
         'progress': task.progress,
-        'start_time': task.start_time.isoformat()
+        'start_time': task.start_time.isoformat(),
+        # место в очереди (1 — следующий); None — уже считается или готово
+        'queue_position': backtest_slots.position(task_id),
     }
     
     if task.error:
@@ -557,7 +582,8 @@ def get_download_status(task_id):
         'task_id': task_id,
         'status': task.status,
         'progress': task.progress,
-        'start_time': task.start_time.isoformat()
+        'start_time': task.start_time.isoformat(),
+        'queue_position': download_slots.position(task_id),
     }
 
     if task.error:

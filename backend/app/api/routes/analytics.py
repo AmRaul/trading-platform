@@ -183,6 +183,83 @@ async def reconcile_position(
         bot=bot, position=position, orders=orders, trade=trade)
 
 
+RECONCILE_BATCH_MAX = 200
+
+
+@router.get("/reconcile-batch")
+async def reconcile_batch(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    exchange: Optional[str] = "paper",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Сверка с бэктестом всех закрытых сделок за период одной сводкой: сколько match /
+    price_drift / mismatch / manual, средний разрыв цены ордеров и выхода, и все
+    сделки не-match с причинами. Свечи монеты качаются один раз на весь прогон."""
+    from app.adapters.caching_market_data import CachingMarketData
+
+    q = (select(Trade, Bot).join(Bot, Bot.id == Trade.bot_id).where(Bot.user_id == current_user.id))
+    if exchange:
+        q = q.where(Bot.exchange == exchange)
+    if since:
+        q = q.where(Trade.closed_at >= since)
+    if until:
+        q = q.where(Trade.closed_at < until)
+    rows = (await db.execute(q.order_by(Trade.closed_at).limit(RECONCILE_BATCH_MAX + 1))).all()
+    truncated = len(rows) > RECONCILE_BATCH_MAX
+    rows = rows[:RECONCILE_BATCH_MAX]
+
+    market = CachingMarketData(BybitMarketDataAdapter())
+    uc = ReconcilePositionUseCase(market)
+    # прогрев: минутки каждой монеты одним диапазоном на все её сделки
+    span: Dict[str, List[int]] = {}
+    for t, _ in rows:
+        o, c = int(t.opened_at.timestamp() * 1000), int(t.closed_at.timestamp() * 1000)
+        lo, hi = span.get(t.symbol, [o, c])
+        span[t.symbol] = [min(lo, o), max(hi, c)]
+    for symbol, (lo, hi) in span.items():
+        await market.get_klines_range(symbol, "1", lo - lo % 60_000, hi)
+
+    results, verdicts = [], {}
+    order_diffs, exit_diffs = [], []
+    for t, bot in rows:
+        position = await db.get(Position, t.position_id)
+        if position is None:
+            continue
+        orders = (await db.execute(select(Order).where(Order.position_id == t.position_id))).scalars().all()
+        try:
+            r = await uc.execute(bot=bot, position=position, orders=orders, trade=t)
+        except Exception as e:
+            r = {"verdict": "error", "issues": [str(e)[:200]]}
+        v = r.get("verdict", "error")
+        verdicts[v] = verdicts.get(v, 0) + 1
+        order_diffs += [abs(o["price_diff_pct"]) for o in r.get("orders", []) if o.get("price_diff_pct") is not None]
+        if (r.get("exit") or {}).get("price_diff_pct") is not None:
+            exit_diffs.append(abs(r["exit"]["price_diff_pct"]))
+        results.append({
+            "position_id": t.position_id, "bot_id": bot.id, "symbol": bot.symbol, "exit_reason": t.exit_reason,
+            "pnl": round(t.pnl, 2), "closed_at": t.closed_at, "verdict": v,
+            "issues": r.get("issues", []), "drift": r.get("drift", []),
+        })
+
+    def avg(xs):
+        return round(sum(xs) / len(xs), 4) if xs else None
+
+    return {
+        "period": {"since": since, "until": until, "exchange": exchange},
+        "trades": len(results),
+        "truncated": truncated,
+        "verdicts": verdicts,
+        "avg_abs_price_diff_pct": {"orders": avg(order_diffs), "exit": avg(exit_diffs)},
+        "max_abs_price_diff_pct": {"orders": max(order_diffs) if order_diffs else None,
+                                   "exit": max(exit_diffs) if exit_diffs else None},
+        "not_match": [r for r in results if r["verdict"] != "match"],
+        "all": [{k: r[k] for k in ("position_id", "bot_id", "symbol", "verdict")} for r in results],
+        "candle_fetches": market.fetches,
+    }
+
+
 @router.get("/trades", response_model=List[TradeResponse])
 async def trades(
     since: Optional[datetime] = None,
