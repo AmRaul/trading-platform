@@ -87,11 +87,16 @@ async def bots_health(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    return await build_bots_health(db, current_user.id)
+
+
+async def build_bots_health(db: AsyncSession, user_id: int) -> Dict[str, Any]:
+    """bots-health пользователя — для API и для личных алертов (services/user_alerts.py)."""
     from app.services.signal_scheduler import signal_scheduler
     from app.services.websocket import price_stream_manager
 
     bots = (await db.execute(
-        select(Bot).where(Bot.user_id == current_user.id).order_by(Bot.id))).scalars().all()
+        select(Bot).where(Bot.user_id == user_id).order_by(Bot.id))).scalars().all()
     open_ids = set()
     if bots:
         open_ids = set((await db.execute(select(Position.bot_id).where(and_(
@@ -101,7 +106,7 @@ async def bots_health(
     from app.services import exchange_issues
     # аккаунты Cryptorg, у которых есть ключ Bybit для сверки — остальные боты работают вслепую
     seeing = set((await db.execute(select(CryptorgAccount.id).where(and_(
-        CryptorgAccount.user_id == current_user.id,
+        CryptorgAccount.user_id == user_id,
         CryptorgAccount.api_key.isnot(None), CryptorgAccount.api_secret.isnot(None))))).scalars().all())
 
     now_ms = int(time.time() * 1000)

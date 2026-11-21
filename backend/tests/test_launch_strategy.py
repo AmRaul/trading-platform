@@ -8,6 +8,12 @@ from app.schemas.ready_strategy import LaunchRequest
 
 SLUG = "mrc-dca-btc-15m-long"
 
+@pytest.fixture(autouse=True)
+def _no_bot_limit(monkeypatch):
+    """Лимит ботов проверяется в test_users_telegram.py; здесь — только сам запуск."""
+    monkeypatch.setattr("app.api.routes.me.ensure_bot_capacity", AsyncMock())
+
+
 
 def _db(account_exists=True):
     db = AsyncMock()

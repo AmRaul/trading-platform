@@ -184,6 +184,8 @@ async def create_bot(
     current_user: User = Depends(get_current_user)
 ):
     """Create new bot"""
+    from app.api.routes.me import ensure_bot_capacity
+    await ensure_bot_capacity(db, current_user)
     await validate_bot_accounts(
         db, current_user, bot_data.exchange, bot_data.account_id, bot_data.bybit_account_id
     )

@@ -41,7 +41,22 @@ async def user_from_access_token(token: Optional[str], db: AsyncSession) -> Opti
     if not username:
         return None
     result = await db.execute(select(User).where(User.username == username))
-    return result.scalar_one_or_none()
+    user = result.scalar_one_or_none()
+    if user is None or access_denied_reason(user):
+        return None  # заблокирован или ещё не одобрен — токен больше не действует
+    return user
+
+
+def access_denied_reason(user: User) -> Optional[str]:
+    """Почему пользователю закрыт вход; None — открыт. Админ (ADMIN_USERNAME) входит всегда:
+    иначе ошибка в базе заперла бы владельца из его же платформы."""
+    if is_admin(user):
+        return None
+    if user.is_active is False:
+        return "Доступ закрыт администратором"
+    if not user.approved:
+        return "Заявка на регистрацию ждёт одобрения администратора"
+    return None
 
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:

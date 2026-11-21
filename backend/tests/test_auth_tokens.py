@@ -15,7 +15,7 @@ from app.api.routes import auth
 from app.core import security
 from app.core.config import settings
 
-USER = SimpleNamespace(id=7, username="raul", hashed_password="$2b$12$hash-one")
+USER = SimpleNamespace(id=7, username="raul", hashed_password="$2b$12$hash-one", is_active=True, approved=True)
 
 
 class FakeResult:

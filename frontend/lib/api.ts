@@ -66,6 +66,24 @@ export const authApi = {
     api.post('/api/auth/login', { username, password }, { withCredentials: true }),
 
   logout: () => api.post('/api/auth/logout', null, { withCredentials: true }),
+
+  changePassword: (old_password: string, new_password: string) =>
+    api.post('/api/auth/password', { old_password, new_password }),
+};
+
+export interface Me {
+  username: string;
+  is_admin: boolean;
+  telegram: { available: boolean; linked: boolean; via_owner_chat: boolean; notify: 'all' | 'real' | 'off'; bot_username: string | null };
+  bots: { count: number; limit: number | null };
+}
+
+// Настройки текущего пользователя: профиль, личный Telegram
+export const meApi = {
+  get: () => api.get<Me>('/api/me'),
+  telegramLink: () => api.post<{ code: string; url: string | null; expires_at: string; bot_username: string | null }>('/api/me/telegram/link'),
+  telegramSettings: (notify: 'all' | 'real' | 'off') => api.put('/api/me/telegram', { notify }),
+  telegramUnlink: () => api.delete('/api/me/telegram'),
 };
 
 // Bots API
@@ -254,4 +272,8 @@ export const adminApi = {
   getUsers: () => api.get('/api/admin/users'),
   getBots: () => api.get('/api/admin/bots'),
   getHealth: () => api.get('/api/admin/health'),
+  approveUser: (id: number) => api.post(`/api/admin/users/${id}/approve`),
+  blockUser: (id: number) => api.post(`/api/admin/users/${id}/block`),
+  unblockUser: (id: number) => api.post(`/api/admin/users/${id}/unblock`),
+  resetPassword: (id: number) => api.post<{ temporary_password: string }>(`/api/admin/users/${id}/reset-password`),
 };

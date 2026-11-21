@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.api.deps import get_current_user, is_admin
+from app.api.deps import access_denied_reason, get_current_user, is_admin
+from app.core import login_limiter
 from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import (verify_password, get_password_hash, create_access_token,
                                create_refresh_token, decode_token, password_fingerprint)
 from app.models import User
-from app.schemas.auth import Token, UserCreate, UserLogin
+from app.schemas.auth import PasswordChange, Token, UserCreate, UserLogin
 
 router = APIRouter()
 
@@ -57,10 +58,16 @@ async def verify_for_proxy(request: Request, current_user: User = Depends(get_cu
     return Response(status_code=204)
 
 
-@router.post("/register", response_model=Token)
+def _client_ip(request: Request) -> str:
+    # за nginx реальный адрес — в X-Real-IP (deploy/nginx); иначе адрес соединения
+    return request.headers.get("X-Real-IP") or (request.client.host if request.client else "?")
+
+
+@router.post("/register")
 async def register(user_data: UserCreate, request: Request, response: Response,
                    db: AsyncSession = Depends(get_db)):
-    """Register new user"""
+    """Регистрация. Новый пользователь ждёт одобрения админа (202, без токена) —
+    кроме самого ADMIN_USERNAME, который входит сразу. Админу уходит сообщение в Telegram."""
     # Check if user exists
     result = await db.execute(select(User).where(User.username == user_data.username))
     existing_user = result.scalar_one_or_none()
@@ -74,28 +81,56 @@ async def register(user_data: UserCreate, request: Request, response: Response,
     # Create user
     hashed_password = get_password_hash(user_data.password)
     user = User(username=user_data.username, hashed_password=hashed_password)
+    user.approved = is_admin(user)
 
     db.add(user)
     await db.commit()
 
+    if not user.approved:
+        from app.services.telegram_notifier import notifier
+        notifier.notify_owner(f"👤 Новая заявка на регистрацию: {user.username}\nОдобрить — kandle → Админка → Пользователи")
+        return JSONResponse({"status": "pending",
+                             "detail": "Заявка отправлена. Войти можно после одобрения администратором."},
+                            status_code=status.HTTP_202_ACCEPTED)
     return _session_response(response, request, user)
 
 
 @router.post("/login", response_model=Token)
 async def login(user_data: UserLogin, request: Request, response: Response,
                 db: AsyncSession = Depends(get_db)):
-    """Login user"""
-    # Get user
+    """Вход. После 10 неудачных попыток за 15 мин с одного IP на один логин — 429."""
+    ip = _client_ip(request)
+    wait = login_limiter.retry_after(ip, user_data.username)
+    if wait:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail=f"Слишком много попыток входа. Повторите через {wait // 60 + 1} мин",
+                            headers={"Retry-After": str(wait)})
     result = await db.execute(select(User).where(User.username == user_data.username))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(user_data.password, user.hashed_password):
+        login_limiter.failed(ip, user_data.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password"
         )
+    login_limiter.succeeded(ip, user_data.username)
+    reason = access_denied_reason(user)
+    if reason:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=reason)
 
     return _session_response(response, request, user)
+
+
+@router.post("/password", status_code=204)
+async def change_password(data: PasswordChange, db: AsyncSession = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
+    """Смена пароля. Все refresh-сессии (другие устройства) после этого недействительны."""
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Текущий пароль неверен")
+    current_user.hashed_password = get_password_hash(data.new_password)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/refresh", response_model=Token)
@@ -107,7 +142,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     if payload and payload.get("sub"):
         result = await db.execute(select(User).where(User.username == payload["sub"]))
         user = result.scalar_one_or_none()
-    if not user or payload.get("pv") != password_fingerprint(user.hashed_password):
+    if not user or payload.get("pv") != password_fingerprint(user.hashed_password) or access_denied_reason(user):
         expired = JSONResponse({"detail": "Session expired"}, status_code=status.HTTP_401_UNAUTHORIZED)
         expired.delete_cookie(REFRESH_COOKIE, path="/api/auth")
         return expired

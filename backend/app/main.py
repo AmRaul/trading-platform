@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.redis import init_redis, close_redis
-from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin, ready_strategies, analytics
+from app.api.routes import auth, bots, trading, positions, trades, websocket, accounts, bybit_accounts, admin, ready_strategies, analytics, me
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,8 +39,16 @@ async def lifespan(app: FastAPI):
     from app.services.exchange_watch import exchange_watch
     exchange_watch.start()
 
+    # личный Telegram: привязка чатов (/start <код>) и алерты пользователям по их ботам
+    from app.services.telegram_bot import telegram_bot
+    from app.services.user_alerts import user_alerts
+    telegram_bot.start()
+    user_alerts.start()
+
     yield
 
+    await user_alerts.stop()
+    await telegram_bot.stop()
     await exchange_watch.stop()
     await signal_scheduler.stop()
     await price_stream_manager.stop()
@@ -80,6 +88,7 @@ app.include_router(bybit_accounts.router, prefix="/api/bybit-accounts", tags=["b
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(ready_strategies.router, prefix="/api/ready-strategies", tags=["ready-strategies"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(me.router, prefix="/api/me", tags=["me"])
 
 
 @app.get("/")
