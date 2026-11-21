@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = ""
     TELEGRAM_NOTIFY: str = "all"
 
+    # Бэктестер (внутренняя сеть docker) — прогоны гипотез из журнала (api/routes/research.py)
+    BACKTESTER_URL: str = "http://backtester-web:8000"
+
     # Лимит ботов на пользователя (админ без лимита)
     MAX_BOTS_PER_USER: int = 20
 
