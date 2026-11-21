@@ -203,7 +203,16 @@ export const accountsApi = {
   update: (id: number, data: { name?: string; webhook_url?: string; api_key?: string; api_secret?: string }) =>
     api.put(`/api/accounts/${id}`, data),
   delete: (id: number) => api.delete(`/api/accounts/${id}`),
+  // ключ Bybit счёта «Bybit-ликвидность»: работает ли и какие позиции видны
+  check: (id: number) => api.post<AccountCheck>(`/api/accounts/${id}/check`),
 };
+
+export interface AccountCheck {
+  ok: boolean;
+  error?: string;
+  read_only?: boolean;
+  positions?: { symbol: string; side: 'LONG' | 'SHORT'; size: number; avg_price: number }[];
+}
 
 // Bybit Accounts API — direct Bybit API key trading, separate from Cryptorg
 export const bybitAccountsApi = {

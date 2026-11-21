@@ -111,6 +111,48 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+class EngineWorker:
+    """Свой цикл обработки цен у каждого бота.
+
+    Раньше слушатель Redis вызывал on_price_update всех ботов по очереди: бот,
+    ждущий биржу (webhook Cryptorg — до 30 с, подтверждение позиции — до 20 с),
+    задерживал стопы всех остальных. Теперь слушатель только кладёт цену в ящик,
+    а обрабатывает её задача бота. Ящик на одну цену: пока бот занят, промежуточные
+    тики заменяются последним — проверять стоп по устаревшей цене бессмысленно.
+    """
+
+    def __init__(self, bot_id: int, engine: "StrategyEngine"):
+        self.bot_id = bot_id
+        self.engine = engine
+        self._price: Optional[float] = None
+        self._event = asyncio.Event()
+        self._stopped = False
+        self.task = asyncio.create_task(self._run())
+
+    def push(self, price: float) -> None:
+        self._price = price
+        self._event.set()
+
+    async def _run(self) -> None:
+        while not self._stopped:
+            await self._event.wait()
+            self._event.clear()
+            if self._stopped or self._price is None:
+                continue
+            try:
+                await self.engine.on_price_update(self._price)
+            except Exception as e:
+                logger.error(f"[PriceStream] strategy {self.bot_id} error: {e}", exc_info=True)
+
+    def stop(self) -> None:
+        self._stopped = True
+        self._event.set()
+        # Бот снимает себя сам из своей же задачи (закрыл позицию) — не отменяем её
+        # посреди операции: цикл выйдет сам после текущего тика.
+        if asyncio.current_task() is not self.task:
+            self.task.cancel()
+
+
 class PriceStreamManager:
     """
     Listens to Redis pub/sub price channels published by price-tracker service.
@@ -122,6 +164,7 @@ class PriceStreamManager:
 
     def __init__(self):
         self.strategy_engines: Dict[int, StrategyEngine] = {}
+        self.workers: Dict[int, EngineWorker] = {}
         self.registered_bots: Set[int] = set()
         # symbol -> время последнего тика из Redis, мс — для bots-health («идут ли цены»)
         self.last_tick_ms: Dict[str, int] = {}
@@ -208,19 +251,22 @@ class PriceStreamManager:
         await _notify_price_tracker("subscribe", exchange, symbol)
 
     async def _update_strategies(self, symbol: str, price: float):
+        """Раздать цену ботам монеты. Не ждёт их обработки — см. EngineWorker."""
         for bot_id in list(self.registered_bots):
             engine = self.strategy_engines.get(bot_id)
-            if engine and engine.bot.symbol == symbol:
-                try:
-                    await engine.on_price_update(price)
-                except Exception as e:
-                    logger.error(f"[PriceStream] strategy {bot_id} error: {e}")
+            worker = self.workers.get(bot_id)
+            if engine and worker and engine.bot.symbol == symbol:
+                worker.push(price)
 
     async def register_strategy(self, bot_id: int):
         # без сессии: движок открывает её сам на каждую операцию с БД
         engine = StrategyEngine(bot_id)
         await engine.initialize()
+        old = self.workers.pop(bot_id, None)
+        if old:
+            old.stop()
         self.strategy_engines[bot_id] = engine
+        self.workers[bot_id] = EngineWorker(bot_id, engine)
         self.registered_bots.add(bot_id)
 
         # Subscribe to price channel for this bot's price feed
@@ -233,6 +279,9 @@ class PriceStreamManager:
         logger.info(f"[PriceStream] Registered bot {bot_id} {engine.bot.symbol} via {exchange}")
 
     def unregister_strategy(self, bot_id: int):
+        worker = self.workers.pop(bot_id, None)
+        if worker:
+            worker.stop()
         engine = self.strategy_engines.pop(bot_id, None)
         if engine:
             # Notify price-tracker to stop streaming if no other bot needs this symbol
@@ -296,6 +345,9 @@ class PriceStreamManager:
     async def stop(self):
         if self._pubsub_task:
             self._pubsub_task.cancel()
+        for worker in list(self.workers.values()):
+            worker.stop()
+        self.workers.clear()
 
 
 def _price_feed(bot) -> str:

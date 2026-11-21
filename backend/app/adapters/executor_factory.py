@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,4 +40,13 @@ async def build_executor(bot: Bot, db: AsyncSession) -> ExchangeExecutor:
     if bot.account_id:
         result = await db.execute(select(CryptorgAccount).where(CryptorgAccount.id == bot.account_id))
         account = result.scalar_one_or_none()
-    return CryptorgExecutorAdapter(get_cryptorg_client(account))
+    return CryptorgExecutorAdapter(get_cryptorg_client(account), reader=cryptorg_reader(account))
+
+
+def cryptorg_reader(account: Optional[CryptorgAccount]) -> Optional[BybitExecutorAdapter]:
+    """Чтение позиций счёта Cryptorg «Bybit-ликвидность» через API Bybit.
+    Ключ выпускается в Cryptorg (раздел API-ключей счёта), хватает «только чтение».
+    Нет ключа — None: Cryptorg работает вслепую, без подтверждения ордеров."""
+    if not account or not account.api_key or not account.api_secret:
+        return None
+    return BybitExecutorAdapter(api_key=decrypt(account.api_key), api_secret=decrypt(account.api_secret))

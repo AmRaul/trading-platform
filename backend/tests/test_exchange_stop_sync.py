@@ -104,7 +104,7 @@ async def test_bybit_hedge_close_takes_size_of_its_side():
     a = _hedge_bybit()
     await a.close_position("SOLUSDT", "SHORT")
     kw = a._client.place_order.call_args.kwargs
-    assert kw["qty"] == "1.0" and kw["side"] == "Buy" and kw["positionIdx"] == 2 and kw["reduceOnly"]
+    assert kw["qty"] == "1" and kw["side"] == "Buy" and kw["positionIdx"] == 2 and kw["reduceOnly"]
 
 
 @pytest.mark.asyncio

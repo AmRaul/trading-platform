@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { accountsApi } from '@/lib/api';
+import { accountsApi, type AccountCheck } from '@/lib/api';
+import { apiErrorText } from '@/lib/types';
 import Navbar from '@/components/Navbar';
-import { Plus, Trash2, Pencil, Key } from 'lucide-react';
+import { Plus, Trash2, Pencil, Key, ShieldCheck } from 'lucide-react';
 
 interface Account {
   id: number;
@@ -55,6 +56,17 @@ export default function AccountsPage() {
     mutationFn: (id: number) => accountsApi.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['accounts'] }),
   });
+
+  const [checks, setChecks] = useState<Record<number, AccountCheck | 'pending'>>({});
+  const runCheck = async (id: number) => {
+    setChecks((c) => ({ ...c, [id]: 'pending' }));
+    try {
+      const { data } = await accountsApi.check(id);
+      setChecks((c) => ({ ...c, [id]: data }));
+    } catch (e) {
+      setChecks((c) => ({ ...c, [id]: { ok: false, error: apiErrorText(e) } }));
+    }
+  };
 
   const openCreate = () => {
     setEditAccount(null);
@@ -127,16 +139,28 @@ export default function AccountsPage() {
                 <p className="text-gray-400 text-sm mt-1">
                   Webhook: <span className="font-mono">{account.webhook_url_hint}</span>
                 </p>
-                <div className="flex gap-3 mt-2 text-xs text-gray-500">
-                  <span className={account.has_api_key ? 'text-green-400' : ''}>
-                    API Key: {account.has_api_key ? '✓' : '—'}
-                  </span>
-                  <span className={account.has_api_secret ? 'text-green-400' : ''}>
-                    API Secret: {account.has_api_secret ? '✓' : '—'}
-                  </span>
+                <div className="mt-2 text-xs">
+                  {account.has_api_key && account.has_api_secret ? (
+                    <span className="text-green-400">Сверка с биржей: ключ Bybit задан — ордера подтверждаются</span>
+                  ) : (
+                    <span className="text-yellow-400">
+                      Сверка с биржей выключена: без ключа Bybit бот не видит, исполнился ли ордер
+                    </span>
+                  )}
                 </div>
+                <CheckResult check={checks[account.id]} />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 self-start">
+                {account.has_api_key && account.has_api_secret && (
+                  <button
+                    onClick={() => runCheck(account.id)}
+                    disabled={checks[account.id] === 'pending'}
+                    className="p-2 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                    title="Проверить ключ"
+                  >
+                    <ShieldCheck size={16} />
+                  </button>
+                )}
                 <button
                   onClick={() => openEdit(account)}
                   className="p-2 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
@@ -188,9 +212,14 @@ export default function AccountsPage() {
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
+              <div className="text-xs text-gray-400 bg-gray-900/60 rounded-lg p-3 leading-relaxed">
+                Ключ Bybit счёта <b>«Bybit-ликвидность»</b> в Cryptorg (раздел API-ключей счёта), тип доступа
+                <b> «Только чтение»</b>. С ним бот проверяет по бирже каждый вход, добор и закрытие,
+                берёт фактические цены и ловит позиции без бота. Без ключа — команды уходят вслепую.
+              </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">
-                  API Key (optional)
+                  Bybit API Key (только чтение)
                 </label>
                 <input
                   type="password"
@@ -202,7 +231,7 @@ export default function AccountsPage() {
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-1">
-                  API Secret (optional)
+                  Bybit API Secret
                 </label>
                 <input
                   type="password"
@@ -232,6 +261,25 @@ export default function AccountsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CheckResult({ check }: { check: AccountCheck | 'pending' | undefined }) {
+  if (!check) return null;
+  if (check === 'pending') return <p className="mt-2 text-xs text-gray-400">Проверяю ключ…</p>;
+  if (!check.ok) return <p className="mt-2 text-xs text-red-400">Ключ не работает: {check.error}</p>;
+  const positions = check.positions ?? [];
+  return (
+    <div className="mt-2 text-xs text-gray-300">
+      <p className="text-green-400">
+        Ключ работает{check.read_only ? ' · только чтение' : ' · ⚠ с правом торговли — для сверки хватит «только чтение»'}
+      </p>
+      <p className="text-gray-400">
+        {positions.length
+          ? 'Открытые позиции: ' + positions.map((p) => `${p.symbol} ${p.side} ${p.size} @ ${p.avg_price}`).join(', ')
+          : 'Открытых позиций на счёте нет'}
+      </p>
     </div>
   );
 }
