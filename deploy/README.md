@@ -41,6 +41,8 @@ Secrets:
 | KANDLE_MCP_TOKEN | секрет в URL коннектора claude.ai (`/mcp/<token>`), ≥32 символов: `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` |
 | TELEGRAM_BOT_TOKEN | токен бота от @BotFather — алерты `trading_alerter` (пусто — алерты только в лог) |
 | TELEGRAM_CHAT_ID | твой chat id: написать боту, затем `https://api.telegram.org/bot<токен>/getUpdates` → `chat.id` |
+| TELEGRAM_BACKUP_CHAT_ID | приватный канал для бэкапов базы (бот — админ канала); пусто → `TELEGRAM_CHAT_ID`. См. services/backup/README.md |
+| BACKUP_PASSPHRASE | ключ шифрования бэкапов; без него бэкап не делается. **Хранить и вне GitHub** |
 
 Generate passwords with `openssl rand -hex 24` (no `'` characters).
 When moving from the old server, reuse its DB/SECRET/ENCRYPTION values.

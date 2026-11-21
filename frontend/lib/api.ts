@@ -1,4 +1,6 @@
-import axios from 'axios';
+import axios, { InternalAxiosRequestConfig } from 'axios';
+import { getAccessToken, goToLogin, refreshAccessToken } from './auth';
+import type { Bot, BotPayload } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const SIGNALS_URL = process.env.NEXT_PUBLIC_SIGNALS_URL || 'http://localhost:8020';
@@ -21,52 +23,62 @@ export const backtesterApi2 = axios.create({
 
 // Токен kandle — во все три API: signals. и backtester. закрыты nginx-проверкой
 // этого же токена (auth_request → /api/auth/verify)
+type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean };
+
 for (const client of [api, signalsApi2, backtesterApi2]) {
-  client.interceptors.request.use((config) => {
-    const token = localStorage.getItem('token');
+  client.interceptors.request.use(async (config) => {
+    if (config.url?.startsWith('/api/auth/')) return config;  // вход/обновление — без Bearer
+    const token = await getAccessToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   });
 
-  // Expired/invalid token → drop it and send the user to login
+  // 401 → один раз обновить access по refresh-cookie и повторить запрос; не вышло — на вход
   client.interceptors.response.use(
     (response) => response,
-    (error) => {
-      const isAuthCall = error.config?.url?.startsWith('/api/auth/');
-      if (error.response?.status === 401 && !isAuthCall && typeof window !== 'undefined') {
-        localStorage.removeItem('token');
-        localStorage.removeItem('username');
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
+    async (error) => {
+      const config = error.config as RetriableConfig | undefined;
+      const isAuthCall = config?.url?.startsWith('/api/auth/');
+      if (error.response?.status === 401 && config && !isAuthCall && typeof window !== 'undefined') {
+        if (!config._retried) {
+          config._retried = true;
+          const token = await refreshAccessToken();
+          if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+            return client(config);
+          }
         }
+        goToLogin();
       }
       return Promise.reject(error);
     }
   );
 }
 
-// Auth API
+// Auth API — withCredentials: refresh-cookie ставится/снимается этими ответами
 export const authApi = {
   register: (username: string, password: string) =>
-    api.post('/api/auth/register', { username, password }),
+    api.post('/api/auth/register', { username, password }, { withCredentials: true }),
 
   login: (username: string, password: string) =>
-    api.post('/api/auth/login', { username, password }),
+    api.post('/api/auth/login', { username, password }, { withCredentials: true }),
+
+  logout: () => api.post('/api/auth/logout', null, { withCredentials: true }),
 };
 
 // Bots API
 export const botsApi = {
-  getAll: () => api.get('/api/bots/'),
+  getAll: () => api.get<Bot[]>('/api/bots/'),
 
   getCryptorg: () => api.get('/api/bots/cryptorg'),
 
   getOne: (id: number) => api.get(`/api/bots/${id}`),
 
-  create: (data: any) => api.post('/api/bots/', data),
+  create: (data: BotPayload) => api.post<Bot>('/api/bots/', data),
 
-  update: (id: number, data: any) => api.patch(`/api/bots/${id}`, data),
+  update: (id: number, data: Partial<BotPayload>) => api.patch<Bot>(`/api/bots/${id}`, data),
 
   delete: (id: number) => api.delete(`/api/bots/${id}`),
 };

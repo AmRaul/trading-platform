@@ -35,6 +35,36 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: cd backend && pytest -q
 
+  integration-backend:
+    name: Integration · backend (Postgres + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trading
+          POSTGRES_PASSWORD: trading
+          POSTGRES_DB: trading_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U trading" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      DATABASE_URL: postgresql+asyncpg://trading:trading@localhost:5432/trading_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-integration
+      PRICE_TRACKER_URL: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - run: cd backend && alembic upgrade head && PYTHONPATH=. python integration/engine_session.py
+
   test-backtester:
     name: Tests · backtester
     runs-on: ubuntu-latest
@@ -72,9 +102,46 @@ jobs:
       - run: pip install -r services/alerter/requirements.txt
       - run: cd services/alerter && pytest -q
 
+  test-backup:
+    name: Tests · backup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r services/backup/requirements.txt
+      - run: cd services/backup && pytest -q
+
+  test-signals:
+    name: Tests · signals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: services/signals/requirements.txt
+      - run: pip install -r services/signals/requirements.txt -r services/signals/requirements-dev.txt
+      - run: cd services/signals && pytest -q
+
+  test-price-tracker:
+    name: Tests · price-tracker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: services/price-tracker/requirements.txt
+      - run: pip install -r services/price-tracker/requirements.txt -r services/price-tracker/requirements-dev.txt
+      - run: cd services/price-tracker && pytest -q
+
   build:
     name: Build · ${{ matrix.name }}
-    needs: [test-backend, test-backtester, test-mcp, test-alerter]
+    needs: [test-backend, integration-backend, test-backtester, test-mcp, test-alerter, test-backup, test-signals, test-price-tracker]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,6 +171,9 @@ jobs:
           - name: alerter
             context: ./services/alerter
             dockerfile: ./services/alerter/Dockerfile
+          - name: backup
+            context: ./services/backup
+            dockerfile: ./services/backup/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -180,11 +250,13 @@ jobs:
           KANDLE_MCP_TOKEN: ${{ secrets.KANDLE_MCP_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BACKUP_CHAT_ID: ${{ secrets.TELEGRAM_BACKUP_CHAT_ID }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD,KANDLE_MCP_USERNAME,KANDLE_MCP_PASSWORD,KANDLE_MCP_TOKEN,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID
+          envs: IMAGE_PREFIX,TAG,GHCR_USER,GHCR_TOKEN,DOMAIN,DB_USER,DB_PASSWORD,SIGNALS_DB_USER,SIGNALS_DB_PASSWORD,BACKTESTER_DB_PASSWORD,SECRET_KEY,ENCRYPTION_KEY,ADMIN_USERNAME,GRAFANA_PASSWORD,KANDLE_MCP_USERNAME,KANDLE_MCP_PASSWORD,KANDLE_MCP_TOKEN,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,TELEGRAM_BACKUP_CHAT_ID,BACKUP_PASSPHRASE
           script_stop: true
           script: |
             set -euo pipefail
@@ -227,6 +299,9 @@ jobs:
             ALERTER_IMAGE='${IMAGE_PREFIX}-alerter:${TAG}'
             TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}'
             TELEGRAM_CHAT_ID='${TELEGRAM_CHAT_ID}'
+            TELEGRAM_BACKUP_CHAT_ID='${TELEGRAM_BACKUP_CHAT_ID}'
+            BACKUP_IMAGE='${IMAGE_PREFIX}-backup:${TAG}'
+            BACKUP_PASSPHRASE='${BACKUP_PASSPHRASE}'
             EOF
             sed -i 's/^[[:space:]]*//' .env
 

@@ -23,32 +23,25 @@ async def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = credentials.credentials
-    payload = decode_access_token(token)
-
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials"
-        )
-
-    username = payload.get("sub")
-    if not username:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload"
-        )
-
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-
+    user = await user_from_access_token(credentials.credentials, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found"
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-
     return user
+
+
+async def user_from_access_token(token: Optional[str], db: AsyncSession) -> Optional[User]:
+    """Пользователь по access-токену или None (нет токена, подпись/срок/тип не те, юзера нет).
+    Общая проверка для HTTP (get_current_user) и WebSocket (первое сообщение auth)."""
+    payload = decode_access_token(token) if token else None
+    username = payload.get("sub") if payload else None
+    if not username:
+        return None
+    result = await db.execute(select(User).where(User.username == username))
+    return result.scalar_one_or_none()
 
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:

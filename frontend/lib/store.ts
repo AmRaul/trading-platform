@@ -1,32 +1,42 @@
 import { create } from 'zustand';
+import { setAccessToken } from './auth';
+import { authApi } from './api';
 
 interface User {
   username: string;
-  token: string;
+  token?: string;  // access-токен: уходит в память lib/auth, в localStorage не пишется
 }
 
 interface AuthState {
   user: User | null;
   setUser: (user: User | null) => void;
   logout: () => void;
+  hydrate: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
+  // null и на сервере, и в первом рендере клиента — иначе расхождение гидратации (React #418);
+  // имя из localStorage подставляет hydrate() после монтирования (app/providers.tsx)
   user: null,
+  hydrate: () => {
+    try {
+      const username = localStorage.getItem('username');
+      if (username) set({ user: { username } });  // имя — для шапки; сессию подтверждает refresh
+    } catch {}
+  },
   setUser: (user) => {
-    set({ user });
-    if (user) {
-      localStorage.setItem('token', user.token);
-      localStorage.setItem('username', user.username);
-    } else {
-      localStorage.removeItem('token');
-      localStorage.removeItem('username');
-    }
+    set({ user: user ? { username: user.username } : null });
+    setAccessToken(user?.token ?? null);
+    try {
+      if (user) localStorage.setItem('username', user.username);
+      else localStorage.removeItem('username');
+    } catch {}
   },
   logout: () => {
     set({ user: null });
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
+    setAccessToken(null);
+    try { localStorage.removeItem('username'); } catch {}
+    authApi.logout().catch(() => {});  // снять refresh-cookie на сервере
   },
 }));
 

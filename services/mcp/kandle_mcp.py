@@ -77,7 +77,7 @@ class KandleAPI:
                 r = await self.http.request(method, path, headers={"Authorization": f"Bearer {self.token}"}, **kw)
             except httpx.HTTPError as e:
                 raise ToolError(f"kandle недоступен ({self.base}): {e}")
-            if r.status_code == 401 and attempt == 1:  # токен истёк (7 дней) — перелогин
+            if r.status_code == 401 and attempt == 1:  # access-токен живёт 30 мин — перелогин
                 await self._login()
                 continue
             if r.status_code >= 400:

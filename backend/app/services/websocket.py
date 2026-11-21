@@ -1,5 +1,6 @@
 from fastapi import WebSocket, WebSocketDisconnect
-from typing import Dict, Set
+from typing import Dict, Optional, Set
+from sqlalchemy import select
 from app.core.redis import get_redis, price_channel
 from app.services.strategy import StrategyEngine
 from app.core.database import AsyncSessionLocal
@@ -15,18 +16,42 @@ RECONNECT_MAX_DELAY = 30
 
 
 class ConnectionManager:
-    """Manage WebSocket connections from browser clients."""
+    """Manage WebSocket connections from browser clients.
+
+    Подключение принимается только после авторизации (routes/websocket.py), и у каждого
+    известен пользователь. События бота (bot_id в данных) уходят только его владельцу.
+    """
 
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.price_subscribers: Dict[str, Set[WebSocket]] = {}
+        self.users: Dict[WebSocket, int] = {}
+        self.bot_owner: Dict[int, int] = {}  # бот не меняет владельца — кешируем навсегда
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, user_id: int):
+        """Регистрирует уже принятое и авторизованное подключение."""
         self.active_connections.add(websocket)
+        self.users[websocket] = user_id
+
+    async def owner_of(self, bot_id) -> Optional[int]:
+        if bot_id is None:
+            return None
+        try:
+            bot_id = int(bot_id)
+        except (TypeError, ValueError):
+            return None
+        if bot_id not in self.bot_owner:
+            from app.models import Bot
+            async with AsyncSessionLocal() as db:
+                uid = (await db.execute(select(Bot.user_id).where(Bot.id == bot_id))).scalar_one_or_none()
+            if uid is None:
+                return None
+            self.bot_owner[bot_id] = uid
+        return self.bot_owner[bot_id]
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.discard(websocket)
+        self.users.pop(websocket, None)
         for symbol in list(self.price_subscribers.keys()):
             self.price_subscribers[symbol].discard(websocket)
             if not self.price_subscribers[symbol]:
@@ -62,9 +87,14 @@ class ConnectionManager:
             self.price_subscribers[symbol].discard(conn)
 
     async def broadcast_event(self, event_type: str, data: dict):
+        """Событие бота — только подключениям его владельца; без bot_id / неизвестный бот — никому."""
         message = {"type": event_type, **data}
+        owner = await self.owner_of(data.get("bot_id"))
+        if owner is None:
+            logger.debug(f"[WS] {event_type} без владельца — не рассылаем")
+            return
         disconnected = set()
-        for connection in self.active_connections:
+        for connection in [c for c in self.active_connections if self.users.get(c) == owner]:
             try:
                 await connection.send_json(message)
             except Exception:
@@ -187,8 +217,8 @@ class PriceStreamManager:
                     logger.error(f"[PriceStream] strategy {bot_id} error: {e}")
 
     async def register_strategy(self, bot_id: int):
-        db = AsyncSessionLocal()
-        engine = StrategyEngine(bot_id, db)
+        # без сессии: движок открывает её сам на каждую операцию с БД
+        engine = StrategyEngine(bot_id)
         await engine.initialize()
         self.strategy_engines[bot_id] = engine
         self.registered_bots.add(bot_id)
@@ -205,7 +235,6 @@ class PriceStreamManager:
     def unregister_strategy(self, bot_id: int):
         engine = self.strategy_engines.pop(bot_id, None)
         if engine:
-            asyncio.create_task(engine.db.close())
             # Notify price-tracker to stop streaming if no other bot needs this symbol
             exchange = _price_feed(engine.bot)
             symbol = engine.bot.symbol

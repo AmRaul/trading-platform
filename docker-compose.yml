@@ -135,6 +135,31 @@ services:
     depends_on:
       - backend
 
+  backup:
+    # Ежедневный зашифрованный дамп trading_db и signals_db в Telegram-канал + 7 копий на сервере.
+    # Ручной запуск: docker exec trading_backup python backup.py now. Восстановление: services/backup/README.md
+    image: ${BACKUP_IMAGE:-ghcr.io/amraul/trading-platform-backup:latest}
+    container_name: trading_backup
+    restart: unless-stopped
+    environment:
+      - BACKUP_TARGETS=trading=${DATABASE_URL:-};signals=postgresql://${SIGNALS_DB_USER:-signals}:${SIGNALS_DB_PASSWORD:-signals123}@signals-db:5432/signals_db
+      - BACKUP_PASSPHRASE=${BACKUP_PASSPHRASE:-}
+      - BACKUP_HOUR_UTC=3
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_BACKUP_CHAT_ID=${TELEGRAM_BACKUP_CHAT_ID:-}
+    volumes:
+      - backups_data:/backups
+    networks:
+      - trading_network
+    logging:
+      driver: json-file
+      options:
+        tag: "trading_backup"
+    depends_on:
+      - postgres
+      - signals-db
+
   signals-db:
     image: postgres:16-alpine
     container_name: trading_signals_db
@@ -238,6 +263,12 @@ services:
       - FLASK_ENV=production
       - DATABASE_URL=postgresql+psycopg2://${BACKTESTER_DB_USER:-backtester}:${BACKTESTER_DB_PASSWORD:-changeme}@backtester-postgres:5432/backtester
       - CORS_ALLOWED_ORIGINS=${BACKTESTER_CORS_ORIGINS:-http://localhost:3000}
+    # Тяжёлый прогон/оптимизация не должны отнимать процессор и память у ботов (VPS 2 vCPU / 4 ГБ):
+    # не больше одного ядра и 1.5 ГБ, а при конкуренции за CPU бэкенд в приоритете (cpu_shares).
+    cpus: 1.0
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpu_shares: 256
     depends_on:
       backtester-postgres:
         condition: service_healthy
@@ -308,3 +339,4 @@ volumes:
   grafana_data:
   signals_db_data:
   backtester_postgres_data:
+  backups_data:

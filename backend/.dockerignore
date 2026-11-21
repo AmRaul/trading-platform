@@ -13,3 +13,4 @@ pytest.ini
 *.log
 logs/
 .DS_Store
+integration/
