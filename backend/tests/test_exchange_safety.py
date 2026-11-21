@@ -244,3 +244,26 @@ async def test_worker_stopping_itself_finishes_current_tick():
     worker.push(1.0)
     await asyncio.sleep(0.05)
     assert finished == [1.0] and worker.task.done() and not worker.task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_hung_browser_does_not_delay_bots_or_other_browsers():
+    """Зависшая вкладка: остальным цена приходит сразу, её саму отключаем по таймауту."""
+    ws.SEND_TIMEOUT_SEC = 0.05
+    mgr = ws.ConnectionManager()
+    got = []
+
+    class Good:
+        async def send_json(self, m):
+            got.append(m["price"])
+
+    class Hung:
+        async def send_json(self, m):
+            await asyncio.sleep(10)
+
+    good, hung = Good(), Hung()
+    mgr.price_subscribers["SOLUSDT"] = {good, hung}
+    t0 = asyncio.get_event_loop().time()
+    await mgr.broadcast_price_update("SOLUSDT", 150.0)
+    assert asyncio.get_event_loop().time() - t0 < 1
+    assert got == [150.0] and mgr.price_subscribers["SOLUSDT"] == {good}

@@ -13,6 +13,22 @@ logger = logging.getLogger(__name__)
 
 RECONNECT_MIN_DELAY = 1
 RECONNECT_MAX_DELAY = 30
+# Отправка одному браузеру дольше этого — вкладка зависла или сеть умерла: отключаем,
+# иначе одна такая вкладка тормозит рассылку всем (и раньше — раздачу цен ботам)
+SEND_TIMEOUT_SEC = 2.0
+
+
+async def _send_all(connections, message: dict) -> set:
+    """Параллельная отправка с таймаутом. Возвращает подключения, которые надо снять."""
+    connections = list(connections)
+    if not connections:
+        return set()
+
+    async def one(conn):
+        await asyncio.wait_for(conn.send_json(message), SEND_TIMEOUT_SEC)
+
+    results = await asyncio.gather(*(one(c) for c in connections), return_exceptions=True)
+    return {c for c, r in zip(connections, results) if isinstance(r, BaseException)}
 
 
 class ConnectionManager:
@@ -64,26 +80,14 @@ class ConnectionManager:
             logger.error(f"Error sending message: {e}")
 
     async def broadcast(self, message: dict):
-        disconnected = set()
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                disconnected.add(connection)
-        for conn in disconnected:
+        for conn in await _send_all(self.active_connections, message):
             self.disconnect(conn)
 
     async def broadcast_price_update(self, symbol: str, price: float):
         if symbol not in self.price_subscribers:
             return
         message = {"type": "price_update", "symbol": symbol, "price": price}
-        disconnected = set()
-        for connection in self.price_subscribers[symbol]:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                disconnected.add(connection)
-        for conn in disconnected:
+        for conn in await _send_all(self.price_subscribers[symbol], message):
             self.price_subscribers[symbol].discard(conn)
 
     async def broadcast_event(self, event_type: str, data: dict):
@@ -93,13 +97,8 @@ class ConnectionManager:
         if owner is None:
             logger.debug(f"[WS] {event_type} без владельца — не рассылаем")
             return
-        disconnected = set()
-        for connection in [c for c in self.active_connections if self.users.get(c) == owner]:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                disconnected.add(connection)
-        for conn in disconnected:
+        mine = [c for c in self.active_connections if self.users.get(c) == owner]
+        for conn in await _send_all(mine, message):
             self.disconnect(conn)
 
     def subscribe_to_price(self, symbol: str, websocket: WebSocket):
@@ -207,8 +206,9 @@ class PriceStreamManager:
                         symbol = data["symbol"]
                         price = float(data["price"])
                         self.last_tick_ms[symbol] = int(time.time() * 1000)
-                        await manager.broadcast_price_update(symbol, price)
+                        # сначала боты (без ожидания — см. EngineWorker), потом браузеры
                         await self._update_strategies(symbol, price)
+                        await manager.broadcast_price_update(symbol, price)
                     except Exception as e:
                         logger.error(f"[PriceStream] message error: {e}")
             except asyncio.CancelledError:
