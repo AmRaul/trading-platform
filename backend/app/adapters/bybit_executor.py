@@ -211,11 +211,13 @@ class BybitExecutorAdapter:
 
     async def close_position(self, symbol: str, side: str, quantity: Optional[float] = None) -> Dict:
         if quantity is None:
-            rows = await self._position_rows(symbol, side)
-            size = float(rows[0]["size"]) if rows and rows[0].get("size") else None
-            if not size:
-                return {"success": False, "error": "No open position size found to close"}
-            qty = size
+            pos = await self.get_position(symbol, side)
+            if pos is None:
+                return {"success": False, "error": "Bybit не отдал позицию — закрытие не отправлено"}
+            if pos[0] <= 0:
+                # Уже закрыта на бирже (биржевой стоп/тейк, вручную) — цель достигнута
+                return {"success": True, "symbol": symbol, "already_closed": True}
+            qty = format(Decimal(str(pos[0])).normalize(), "f")
         else:
             qty = quantity
 
@@ -236,19 +238,47 @@ class BybitExecutorAdapter:
 
         return {"success": True, "symbol": symbol}
 
-    async def get_open_position_size(self, symbol: str, side: str) -> Optional[float]:
-        response = await self._run(
-            lambda: self._client.get_positions(category="linear", symbol=symbol)
-        )
+    async def get_position(self, symbol: str, side: str) -> Optional[Tuple[float, float]]:
+        """(размер в монетах, средняя цена) позиции стороны side; (0, 0) — позиции нет.
+        None — биржа не ответила (сеть, ключ): «не знаем» не путать с «позиции нет»."""
+        try:
+            response = await self._run(
+                lambda: self._client.get_positions(category="linear", symbol=symbol)
+            )
+        except Exception as e:  # pybit бросает InvalidRequestError на retCode != 0
+            logger.error(f"[Bybit] get_positions {symbol}: {e}")
+            return None
         if response.get("retCode") != 0:
             logger.error(f"[Bybit] get_positions failed: {response.get('retMsg')}")
             return None
         wanted = self._side(side)
-        size = 0.0
+        size = value = 0.0
         for row in response.get("result", {}).get("list", []):
-            if row.get("side") == wanted and row.get("size"):
-                size += float(row["size"])
-        return size
+            if row.get("side") == wanted and row.get("size") and float(row["size"]) > 0:
+                qty = float(row["size"])
+                size += qty
+                value += qty * float(row.get("avgPrice") or 0)
+        return size, (value / size if size else 0.0)
+
+    async def check_key(self) -> Dict:
+        """Проверка ключа: работает ли, только ли чтение, какие позиции видны."""
+        try:
+            info = await self._run(lambda: self._client.get_api_key_information())
+            positions = await self._run(lambda: self._client.get_positions(category="linear", settleCoin="USDT"))
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+        if info.get("retCode") != 0 or positions.get("retCode") != 0:
+            return {"ok": False, "error": info.get("retMsg") or positions.get("retMsg")}
+        rows = [
+            {"symbol": r["symbol"], "side": "LONG" if r.get("side") == "Buy" else "SHORT",
+             "size": float(r["size"]), "avg_price": float(r.get("avgPrice") or 0)}
+            for r in positions.get("result", {}).get("list", []) if r.get("size") and float(r["size"]) > 0
+        ]
+        return {"ok": True, "read_only": info.get("result", {}).get("readOnly") == 1, "positions": rows}
+
+    async def get_open_position_size(self, symbol: str, side: str) -> Optional[float]:
+        pos = await self.get_position(symbol, side)
+        return None if pos is None else pos[0]
 
     async def update_stop_and_tp(
         self,

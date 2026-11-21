@@ -36,8 +36,12 @@ async def lifespan(app: FastAPI):
     from app.services.signal_scheduler import signal_scheduler
     signal_scheduler.start()
 
+    from app.services.exchange_watch import exchange_watch
+    exchange_watch.start()
+
     yield
 
+    await exchange_watch.stop()
     await signal_scheduler.stop()
     await price_stream_manager.stop()
     logger.info("Shutting down...")

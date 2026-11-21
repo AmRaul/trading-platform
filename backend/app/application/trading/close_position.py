@@ -6,6 +6,7 @@ from app.ports.event_publisher import EventPublisher
 from app.domain.trading.position_calculator import PositionCalculator
 from app.models import Bot, Position, Trade
 from app.core.redis import delete_position_state
+from app.services import exchange_issues
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,20 @@ class ClosePositionUseCase:
                 quantity=None,
             )
             if not close_result or not close_result.get("success"):
-                logger.error("Failed to close position on exchange — closing locally anyway")
+                error = (close_result or {}).get("error") or "биржа не подтвердила закрытие"
+                if getattr(self.executor, "can_verify", True):
+                    # Исполнитель видит биржу и говорит, что позиция открыта: закрыть её
+                    # только у себя — значит бросить живую позицию без стопа. Не закрываем,
+                    # движок повторит закрытие (см. StrategyEngine._close_position).
+                    logger.error(f"[CLOSE FAILED] bot={bot.id}: {error} — позиция остаётся под управлением")
+                    exchange_issues.report(bot.id, "close", f"не закрылась на бирже ({exit_reason}): {error}")
+                    return {"success": False, "error": error}
+                # Cryptorg без ключа Bybit: проверить биржу нечем — как раньше закрываем у себя
+                logger.error(f"[CLOSE UNVERIFIED] bot={bot.id}: {error} — closing locally anyway")
+                exchange_issues.report(bot.id, "close_unverified", (
+                    f"webhook закрытия ({exit_reason}) вернул ошибку: {error}. Сделка закрыта только у нас — "
+                    f"проверь позицию в Cryptorg руками (ключ Bybit для сверки не задан)"), ttl_sec=6 * 3600)
+            exchange_issues.clear(bot.id, "close")
 
         pnl = calculator.calculate_unrealized_pnl(
             bot.side, position.average_price, exit_price, position.total_size

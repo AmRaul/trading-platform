@@ -8,6 +8,7 @@ from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.models import Bot, Position, Order
 from app.core.redis import set_position_state
+from app.services import exchange_issues
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,17 @@ class AddPyramidingOrderUseCase:
             amount_usdt=order_size_usdt,
         )
         if not order_result or not order_result.get("success"):
-            logger.error("Failed to place pyramiding order")
-            return {"success": False, "error": "Exchange rejected order"}
+            error = (order_result or {}).get("error") or "Exchange rejected order"
+            logger.error(f"Failed to place pyramiding order: {error}")
+            exchange_issues.report(bot.id, "add", f"ордер #{order_number} не исполнен: {error}")
+            return {"success": False, "error": error}
+        exchange_issues.clear(bot.id, "add")
 
-        ticker = await self.market_data.get_ticker(bot.symbol)
-        fill_price = float(ticker["lastPrice"]) if ticker and ticker.get("lastPrice") else trigger_price
+        if order_result.get("fill_price"):
+            fill_price = float(order_result["fill_price"])  # фактическая цена добора с биржи
+        else:
+            ticker = await self.market_data.get_ticker(bot.symbol)
+            fill_price = float(ticker["lastPrice"]) if ticker and ticker.get("lastPrice") else trigger_price
         logger.info(
             f"[AVG FILL] trigger={trigger_price} fill={fill_price} "
             f"slippage={fill_price - trigger_price:+.6f}"

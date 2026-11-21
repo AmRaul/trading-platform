@@ -8,6 +8,7 @@ from app.domain.trading.entities import OrderInfo
 from app.domain.trading.position_calculator import PositionCalculator
 from app.models import Bot, Position, Order
 from app.core.redis import set_position_state
+from app.services import exchange_issues
 import logging
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,16 @@ class OpenPositionUseCase:
         )
 
         if not order_result or not order_result.get("success"):
-            return {"success": False, "error": order_result.get("error", "Failed to place order")}
+            error = (order_result or {}).get("error") or "Failed to place order"
+            exchange_issues.report(bot.id, "open", f"вход не выполнен: {error}", ttl_sec=3600)
+            return {"success": False, "error": error}
+        exchange_issues.clear(bot.id, "open")
+
+        # Исполнитель, который видит биржу (Cryptorg с ключом Bybit), отдаёт фактическую
+        # среднюю цену входа — она точнее тикера до отправки команды
+        if order_result.get("avg_price"):
+            logger.info(f"[OPEN FILL] ticker={current_price} fill={order_result['avg_price']}")
+            current_price = float(order_result["avg_price"])
 
         position = Position(
             bot_id=bot.id,

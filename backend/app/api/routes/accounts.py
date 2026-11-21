@@ -141,3 +141,28 @@ async def delete_account(
     await db.delete(account)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/{account_id}/check")
+async def check_account(
+    account_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Проверить ключ Bybit счёта Cryptorg: работает ли и какие позиции видны.
+    С рабочим ключом бот подтверждает каждый ордер позицией на бирже."""
+    from app.adapters.executor_factory import cryptorg_reader
+
+    result = await db.execute(
+        select(CryptorgAccount).where(
+            CryptorgAccount.id == account_id,
+            CryptorgAccount.user_id == current_user.id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    reader = cryptorg_reader(account)
+    if not reader:
+        return {"ok": False, "error": "Ключ Bybit не задан — ордера Cryptorg не проверяются"}
+    return await reader.check_key()

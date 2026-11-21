@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 # Как часто сверять открытую позицию с биржей (get_open_position_size)
 RECONCILE_INTERVAL_SEC = 60
+# Биржа не подтвердила закрытие — пауза перед повтором (позиция остаётся под управлением)
+CLOSE_RETRY_SEC = 15
+# Добор не исполнился — пауза перед новой попыткой: команда могла исполниться с опозданием,
+# частые повторы рискуют добрать дважды
+ADD_RETRY_SEC = 60
 
 
 class BotState(str, Enum):
@@ -58,6 +63,10 @@ class StrategyEngine:
     straddle = None  # StraddleRunner для bot_type=straddle
     _fixed_db: Optional[AsyncSession] = None
     _op_db: Optional[AsyncSession] = None
+    # повтор неподтверждённого закрытия / пауза после неисполненного добора (см. CLOSE_RETRY_SEC)
+    _close_retry_at = 0.0
+    _pending_close: Optional[str] = None
+    _add_retry_at = 0.0
 
     def __init__(self, bot_id: int, db: Optional[AsyncSession] = None):
         self.bot_id = bot_id
@@ -73,6 +82,9 @@ class StrategyEngine:
         self._last_tick_log = 0.0
         self._executor = None
         self._last_reconcile = time.time()
+        self._close_retry_at = 0.0
+        self._pending_close: Optional[str] = None  # причина закрытия, которое биржа не подтвердила
+        self._add_retry_at = 0.0
 
         self._market = BybitMarketDataAdapter()
         self._publisher = WebSocketPublisherAdapter()
@@ -331,6 +343,12 @@ class StrategyEngine:
         try:
             if self._is_closing or not self.position or not self.position.is_open:
                 return
+            if self._pending_close:
+                # Решение выйти уже принято (стоп/тейк/вручную), биржа его не подтвердила:
+                # повторяем закрытие, даже если цена вернулась, и больше ничего не делаем
+                if now >= self._close_retry_at:
+                    await self._close_position(current_price, self._pending_close)
+                return
 
             # 1. Check SL hit
             if self.calculator.is_stop_loss_hit(self.bot.side, current_price, self.position.current_sl):
@@ -372,7 +390,7 @@ class StrategyEngine:
             else:
                 add_order = self.calculator.should_add_order(self.bot.side, current_price, last_order_price)
             if add_order:
-                if self._is_adding_order:
+                if self._is_adding_order or now < self._add_retry_at:
                     return
                 logger.info(
                     f"[AVG TRIGGER] bot={self.bot_id} current={current_price} "
@@ -420,7 +438,8 @@ class StrategyEngine:
                 self.bot, self.position, self.calculator, current_price, self.db
             )
             if not result["success"]:
-                logger.error(f"Pyramiding order failed: {result.get('error')}")
+                logger.error(f"Pyramiding order failed: {result.get('error')} — повтор не раньше чем через {ADD_RETRY_SEC} с")
+                self._add_retry_at = time.time() + ADD_RETRY_SEC
             # Только что докупили — биржа может ещё не отдавать обновлённую позицию
             self._last_reconcile = time.time()
         except Exception as e:
@@ -430,21 +449,30 @@ class StrategyEngine:
             self._is_adding_order = False
 
     @_in_session
-    async def _close_position(self, exit_price: float, exit_reason: str, send_to_exchange: bool = True):
+    async def _close_position(self, exit_price: float, exit_reason: str, send_to_exchange: bool = True) -> Dict:
         self._is_closing = True
         try:
-            await self._close_uc.execute(
+            result = await self._close_uc.execute(
                 self.bot, self.position, self.calculator, exit_price, exit_reason, self.db,
                 send_to_exchange=send_to_exchange,
             )
+            if not result.get("success"):
+                # Биржа говорит, что позиция открыта: остаёмся в позиции и повторим закрытие
+                self._close_retry_at = time.time() + CLOSE_RETRY_SEC
+                self._pending_close = exit_reason
+                return result
+            self._close_retry_at = 0.0
+            self._pending_close = None
             self.current_state = BotState.IDLE
             self.position = None
 
             from app.services.websocket import price_stream_manager
             price_stream_manager.unregister_strategy(self.bot_id)
+            return result
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error closing position: {e}")
+            return {"success": False, "error": str(e)}
         finally:
             self._is_closing = False
 
@@ -460,7 +488,9 @@ class StrategyEngine:
             if not ticker:
                 return {"success": False, "error": "Failed to get ticker price"}
             current_price = float(ticker["lastPrice"])
-            await self._close_position(current_price, "MANUAL_CLOSE")
+            result = await self._close_position(current_price, "MANUAL_CLOSE")
+            if not result.get("success"):
+                return {"success": False, "error": result.get("error") or "Позиция не закрылась на бирже"}
             return {"success": True, "exit_price": current_price}
         except Exception as e:
             logger.error(f"Error in manual_close: {e}")

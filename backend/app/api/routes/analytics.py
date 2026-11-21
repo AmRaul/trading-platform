@@ -97,6 +97,13 @@ async def bots_health(
         open_ids = set((await db.execute(select(Position.bot_id).where(and_(
             Position.bot_id.in_([b.id for b in bots]), Position.is_open == True)))).scalars().all())  # noqa: E712
 
+    from app.models.cryptorg_account import CryptorgAccount
+    from app.services import exchange_issues
+    # аккаунты Cryptorg, у которых есть ключ Bybit для сверки — остальные боты работают вслепую
+    seeing = set((await db.execute(select(CryptorgAccount.id).where(and_(
+        CryptorgAccount.user_id == current_user.id,
+        CryptorgAccount.api_key.isnot(None), CryptorgAccount.api_secret.isnot(None))))).scalars().all())
+
     now_ms = int(time.time() * 1000)
     rows = []
     for b in bots:
@@ -109,6 +116,13 @@ async def bots_health(
             scheduler_running=signal_scheduler.running, scheduler_started_ms=signal_scheduler.started_ms,
             last_check=last, now_ms=now_ms, last_tick_ms=tick,
         )
+        # проблемы исполнения: биржа не подтвердила ордер, позиция-сирота (services/exchange_issues)
+        exec_issues = exchange_issues.issues_for(b.id)
+        if exec_issues:
+            health = {**health, "status": "problem", "issues": [*health.get("issues", []), *exec_issues]}
+        if b.exchange == "cryptorg" and b.account_id not in seeing:
+            health = {**health, "notes": [*health.get("notes", []),
+                                          "Cryptorg без ключа Bybit: исполнение ордеров не проверяется"]}
         rows.append({
             "bot_id": b.id, "name": b.name, "symbol": b.symbol, "side": b.side,
             "exchange": b.exchange, "state": b.state, "has_open_position": b.id in open_ids,
