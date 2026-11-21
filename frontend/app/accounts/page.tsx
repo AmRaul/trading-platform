@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountsApi, type AccountCheck } from '@/lib/api';
 import { apiErrorText } from '@/lib/types';
@@ -151,6 +152,15 @@ export default function AccountsPage() {
                 <CheckResult check={checks[account.id]} />
               </div>
               <div className="flex gap-2 self-start">
+                {account.has_api_key && account.has_api_secret && (
+                  <Link
+                    href={`/accounts/${account.id}`}
+                    className="px-3 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm transition-colors"
+                    title="Все позиции и сделки счёта на бирже"
+                  >
+                    Счёт
+                  </Link>
+                )}
                 {account.has_api_key && account.has_api_secret && (
                   <button
                     onClick={() => runCheck(account.id)}

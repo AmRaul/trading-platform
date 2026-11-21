@@ -137,6 +137,30 @@ async def bots_health(
     }
 
 
+@router.get("/forward-test")
+async def forward_test(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Комплекты бумажного форвард-теста: ожидания, критерии остановки и боты каждой части
+    (по полю bot.forward_test, не по названию — переименование разбор не ломает)."""
+    from app.domain.forward_test import FORWARD_TEST_SETS, parse
+
+    bots = (await db.execute(select(Bot).where(and_(
+        Bot.user_id == current_user.id, Bot.forward_test.isnot(None))).order_by(Bot.id))).scalars().all()
+    members: Dict[str, Dict[str, List[Dict]]] = {}
+    for b in bots:
+        key = parse(b.forward_test)
+        if key:
+            members.setdefault(key[0], {}).setdefault(key[1], []).append(
+                {"bot_id": b.id, "name": b.name, "symbol": b.symbol, "state": b.state})
+    sets = {}
+    for key, s in FORWARD_TEST_SETS.items():
+        sets[key] = {**s, "parts": {
+            part: {**p, "bots": members.get(key, {}).get(part, [])} for part, p in s["parts"].items()}}
+    return {"sets": sets}
+
+
 @router.get("/reconcile/{position_id}")
 async def reconcile_position(
     position_id: int,
@@ -171,6 +195,123 @@ async def trades(
     if bot_id is not None:
         q = q.where(Trade.bot_id == bot_id)
     return (await db.execute(q.order_by(Trade.closed_at).limit(10_000))).scalars().all()
+
+
+@router.get("/position-levels/{bot_id}")
+async def position_levels(
+    bot_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Уровни открытой позиции бота, посчитанные логикой самого бота: стоп и результат
+    на нём с комиссией, тейк, с какой цены трейлинг двинет стоп, следующий ордер и стоп после него."""
+    from app.application.monitoring.position_levels import DEFAULT_FEE_RATE, position_levels as levels
+    from app.core.redis import get_position_state
+    from app.domain.trading.entities import OrderInfo
+
+    bot = (await db.execute(select(Bot).where(Bot.id == bot_id, Bot.user_id == current_user.id))).scalar_one_or_none()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found")
+    pos = (await db.execute(select(Position).where(and_(
+        Position.bot_id == bot_id, Position.is_open == True)))).scalar_one_or_none()  # noqa: E712
+    if not pos:
+        return {"bot_id": bot_id, "open_position": None}
+    orders = (await db.execute(select(Order).where(Order.position_id == pos.id)
+                               .order_by(Order.order_number))).scalars().all()
+    live = await get_position_state(str(bot_id)) or {}
+    ticker = await BybitMarketDataAdapter().get_ticker(bot.symbol)
+    if not ticker or not ticker.get("lastPrice"):
+        raise HTTPException(status_code=502, detail="Нет цены с Bybit")
+    return {
+        "bot_id": bot_id, "position_id": pos.id, "side": bot.side,
+        **levels(
+            bot.config or {}, bot.side, [OrderInfo(o.order_number, o.price, o.size) for o in orders],
+            live.get("current_sl", pos.current_sl), float(ticker["lastPrice"]),
+            live.get("total_size", pos.total_size), trailing_enabled=pos.trailing_enabled,
+            fee_rate=DEFAULT_FEE_RATE,
+        ),
+    }
+
+
+SNAPSHOTS_KEEP = 500  # снимков what_changed на пользователя
+
+
+@router.get("/changes")
+async def changes(
+    since: Optional[datetime] = None,
+    save: bool = True,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Что изменилось с прошлой проверки (или с since): входы, доборы, закрытые сделки,
+    новые/удалённые боты, смена состояния, сдвиги стопов, изменение плавающего PnL.
+
+    База сравнения — последний снимок не позже since (без since — просто последний).
+    save=True — записать текущее состояние новым снимком: следующий вызов покажет
+    изменения уже от этой проверки. Снимков нет (первый вызов) — только события за 24 ч."""
+    from datetime import timedelta, timezone
+
+    from app.application.monitoring.what_changed import bot_snapshot, diff
+    from app.core.redis import get_position_state
+    from app.models import StateSnapshot
+
+    now = datetime.now(timezone.utc)
+    if since is not None and since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+
+    bots = (await db.execute(select(Bot).where(Bot.user_id == current_user.id).order_by(Bot.id))).scalars().all()
+    names = {b.id: b.name for b in bots}
+    bot_ids = list(names)
+    open_positions = {p.bot_id: p for p in (await db.execute(select(Position).where(and_(
+        Position.bot_id.in_(bot_ids), Position.is_open == True)))).scalars().all()} if bot_ids else {}  # noqa: E712
+    lives = await asyncio.gather(*[get_position_state(str(bid)) for bid in open_positions])
+    live = dict(zip(open_positions, lives))
+    current = {str(b.id): bot_snapshot(b, open_positions.get(b.id), live.get(b.id)) for b in bots}
+
+    q = select(StateSnapshot).where(StateSnapshot.user_id == current_user.id)
+    if since is not None:
+        q = q.where(StateSnapshot.taken_at <= since)
+    baseline = (await db.execute(q.order_by(StateSnapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+
+    start = since or (baseline.taken_at if baseline else now - timedelta(hours=24))
+    events: Dict[str, List[Dict]] = {"entries": [], "adds": [], "exits": []}
+    if bot_ids:
+        for p in (await db.execute(select(Position).where(and_(
+                Position.bot_id.in_(bot_ids), Position.opened_at >= start)).order_by(Position.opened_at))).scalars():
+            events["entries"].append({"bot_id": p.bot_id, "name": names[p.bot_id], "position_id": p.id,
+                                      "at": p.opened_at, "is_open": p.is_open})
+        for o in (await db.execute(select(Order).where(and_(
+                Order.bot_id.in_(bot_ids), Order.order_number > 1, Order.filled_at >= start))
+                .order_by(Order.filled_at))).scalars():
+            events["adds"].append({"bot_id": o.bot_id, "name": names[o.bot_id], "order_number": o.order_number,
+                                   "price": o.price, "size": o.size, "at": o.filled_at})
+        for t in (await db.execute(select(Trade).where(and_(
+                Trade.bot_id.in_(bot_ids), Trade.closed_at >= start)).order_by(Trade.closed_at))).scalars():
+            events["exits"].append({"bot_id": t.bot_id, "name": names[t.bot_id], "exit_reason": t.exit_reason,
+                                    "pnl": round(t.pnl, 2), "exit_price": t.exit_price,
+                                    "total_orders": t.total_orders, "at": t.closed_at})
+
+    result: Dict[str, Any] = {
+        "since": start,
+        "compared_with_snapshot": baseline.taken_at if baseline else None,
+        "events": events,
+        "realized_in_period": round(sum(e["pnl"] for e in events["exits"]), 2),
+    }
+    if baseline:
+        result.update(diff(baseline.data or {}, current))
+    else:
+        result["note"] = "снимков ещё не было — показаны только события; сравнение появится со следующего вызова"
+
+    if save:
+        db.add(StateSnapshot(user_id=current_user.id, data=current))
+        await db.flush()
+        old_ids = (await db.execute(select(StateSnapshot.id).where(StateSnapshot.user_id == current_user.id)
+                                    .order_by(StateSnapshot.taken_at.desc()).offset(SNAPSHOTS_KEEP))).scalars().all()
+        if old_ids:
+            from sqlalchemy import delete
+            await db.execute(delete(StateSnapshot).where(StateSnapshot.id.in_(old_ids)))
+        await db.commit()
+    return result
 
 
 class ReviewCreate(BaseModel):

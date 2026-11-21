@@ -101,6 +101,7 @@ async def get_bots(
             account_id=bot.account_id,
             bybit_account_id=bot.bybit_account_id,
             limit_entry_price=bot.limit_entry_price,
+            forward_test=bot.forward_test,
             straddle=live_states.get(bot.id, {}).get("straddle") or bot.runtime_state,
             created_at=bot.created_at,
             started_at=bot.started_at,
@@ -237,6 +238,12 @@ async def update_bot(
 
     if bot_data.is_active is not None:
         bot.is_active = bot_data.is_active
+
+    if 'forward_test' in bot_data.model_fields_set:
+        bot.forward_test = bot_data.forward_test or None
+
+    from app.services.telegram_notifier import notifier
+    notifier.forget(bot.id)  # имя/сетка в уведомлениях — свежие
 
     # account_id uses model_fields_set (not `is not None`) so an explicit
     # null in the request body actually detaches the account — the frontend

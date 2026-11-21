@@ -6,5 +6,6 @@ from app.models.position import Position
 from app.models.order import Order
 from app.models.trade import Trade
 from app.models.review import Review
+from app.models.state_snapshot import StateSnapshot
 
-__all__ = ["User", "CryptorgAccount", "BybitAccount", "Bot", "Position", "Order", "Trade", "Review"]
+__all__ = ["User", "CryptorgAccount", "BybitAccount", "Bot", "Position", "Order", "Trade", "Review", "StateSnapshot"]

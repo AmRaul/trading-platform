@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Price Tracker service URL
     PRICE_TRACKER_URL: str = "http://price-tracker:8010"
 
+    # Уведомления о сделках в Telegram (services/telegram_notifier.py); тот же бот и чат, что у алертера.
+    # TELEGRAM_NOTIFY: all — все боты, real — без бумажных, off — выключено
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    TELEGRAM_NOTIFY: str = "all"
+
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000"]
 
