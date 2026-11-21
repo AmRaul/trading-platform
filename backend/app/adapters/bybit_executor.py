@@ -5,7 +5,12 @@ from typing import Dict, Optional, Tuple
 
 from pybit.unified_trading import HTTP
 
+from app.adapters import bybit_clock
+
 logger = logging.getLogger(__name__)
+
+# метки подписанных запросов — по часам Bybit, а не сервера (см. bybit_clock)
+bybit_clock.install()
 
 
 class BybitExecutorAdapter:
@@ -328,7 +333,15 @@ class BybitExecutorAdapter:
             info = await self._run(lambda: self._client.get_api_key_information())
             positions = await self._run(lambda: self._client.get_positions(category="linear", settleCoin="USDT"))
         except Exception as e:
-            return {"ok": False, "error": str(e)[:300]}
+            if "10002" in str(e):  # часы ушли с последнего замера — перемерить и повторить
+                await self._run(bybit_clock.sync)
+                try:
+                    info = await self._run(lambda: self._client.get_api_key_information())
+                    positions = await self._run(lambda: self._client.get_positions(category="linear", settleCoin="USDT"))
+                except Exception as e2:
+                    return {"ok": False, "error": str(e2)[:300]}
+            else:
+                return {"ok": False, "error": str(e)[:300]}
         if info.get("retCode") != 0 or positions.get("retCode") != 0:
             return {"ok": False, "error": info.get("retMsg") or positions.get("retMsg")}
         rows = [

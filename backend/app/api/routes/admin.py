@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ import logging
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis
-from app.api.deps import get_admin_user
+from app.api.deps import get_admin_user, is_admin
 from app.models import User, Bot, Position, CryptorgAccount
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,10 @@ class AdminUserRow(BaseModel):
     username: str
     email: Optional[str]
     is_active: bool
+    approved: bool = True
+    # pending — ждёт одобрения, active — работает, blocked — заблокирован
+    status: str = "active"
+    telegram_linked: bool = False
     plan: str
     created_at: datetime
     bots_count: int
@@ -121,6 +125,9 @@ async def get_admin_users(
             username=u.username,
             email=u.email,
             is_active=u.is_active,
+            approved=bool(u.approved),
+            status=_status(u),
+            telegram_linked=bool(u.telegram_chat_id),
             plan=u.plan,
             created_at=u.created_at,
             bots_count=bots_by_user.get(u.id, 0),
@@ -217,3 +224,68 @@ async def get_admin_health(
         db_active_bots_count=len(active_rows),
         desynced_bots=desynced_bots,
     )
+
+
+def _status(u: User) -> str:
+    if u.is_active is False:
+        return "blocked"
+    return "active" if u.approved or is_admin(u) else "pending"
+
+
+async def _target(db: AsyncSession, user_id: int, admin: User) -> User:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="Нельзя менять собственный доступ")
+    return user
+
+
+async def _tell(user: User, text: str) -> None:
+    """Сообщить пользователю в его Telegram, если привязан."""
+    from app.services.telegram_notifier import notifier, telegram_call
+    notifier.forget_user(user.id)
+    if user.telegram_chat_id and settings.TELEGRAM_BOT_TOKEN:
+        await telegram_call(settings.TELEGRAM_BOT_TOKEN, "sendMessage", {"chat_id": user.telegram_chat_id, "text": text})
+
+
+@router.post("/users/{user_id}/approve")
+async def approve_user(user_id: int, db: AsyncSession = Depends(get_db), admin: User = Depends(get_admin_user)):
+    user = await _target(db, user_id, admin)
+    user.approved, user.is_active = True, True
+    await db.commit()
+    await _tell(user, "✅ kandle: доступ открыт")
+    return {"id": user.id, "status": _status(user)}
+
+
+@router.post("/users/{user_id}/block")
+async def block_user(user_id: int, db: AsyncSession = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """Закрыть вход: токены перестают действовать сразу. Боты пользователя НЕ останавливаются
+    и позиции не закрываются — это его деньги; при необходимости их закрывает он сам."""
+    user = await _target(db, user_id, admin)
+    user.is_active = False
+    await db.commit()
+    await _tell(user, "⛔ kandle: доступ закрыт администратором. Боты продолжают работать.")
+    return {"id": user.id, "status": _status(user)}
+
+
+@router.post("/users/{user_id}/unblock")
+async def unblock_user(user_id: int, db: AsyncSession = Depends(get_db), admin: User = Depends(get_admin_user)):
+    user = await _target(db, user_id, admin)
+    user.is_active = True
+    await db.commit()
+    await _tell(user, "✅ kandle: доступ снова открыт")
+    return {"id": user.id, "status": _status(user)}
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_password(user_id: int, db: AsyncSession = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """Временный пароль (показывается один раз) — передать пользователю, он сменит его
+    в «Настройках». Все его сессии на других устройствах после этого недействительны."""
+    import secrets
+    from app.core.security import get_password_hash
+    user = await _target(db, user_id, admin)
+    temp = "Kt" + secrets.token_urlsafe(9) + "7#"  # подходит под требования к паролю
+    user.hashed_password = get_password_hash(temp)
+    await db.commit()
+    return {"id": user.id, "temporary_password": temp}

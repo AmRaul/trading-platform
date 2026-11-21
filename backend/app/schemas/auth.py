@@ -95,3 +95,14 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     username: str
     password: str = Field(..., max_length=72)
+
+
+class PasswordChange(BaseModel):
+    old_password: str = Field(..., max_length=72)
+    # те же требования к паролю, что при регистрации
+    new_password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        return UserCreate.validate_password_strength(v)

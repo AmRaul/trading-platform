@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str = ""
     TELEGRAM_NOTIFY: str = "all"
 
+    # Лимит ботов на пользователя (админ без лимита)
+    MAX_BOTS_PER_USER: int = 20
+
     # CORS
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000"]
 

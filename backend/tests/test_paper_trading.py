@@ -19,6 +19,12 @@ from app.schemas.ready_strategy import LaunchRequest
 from app.services.strategy import BotState, StrategyEngine
 from tests.conftest import BASE_CONFIG, make_mock_bot
 
+@pytest.fixture(autouse=True)
+def _no_bot_limit(monkeypatch):
+    """Лимит ботов проверяется в test_users_telegram.py; здесь — только сам запуск."""
+    monkeypatch.setattr("app.api.routes.me.ensure_bot_capacity", AsyncMock())
+
+
 
 def _paper_engine(bot, db, price):
     executor = PaperExecutorAdapter()

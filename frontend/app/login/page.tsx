@@ -13,11 +13,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotice('');
     setLoading(true);
 
     try {
@@ -25,6 +27,13 @@ export default function LoginPage() {
         ? await authApi.register(username, password)
         : await authApi.login(username, password);
 
+      // регистрация ждёт одобрения админа — токена нет
+      if (response.status === 202) {
+        setNotice(response.data?.detail || 'Заявка отправлена. Войти можно после одобрения администратором.');
+        setIsRegister(false);
+        setPassword('');
+        return;
+      }
       const { access_token } = response.data;
 
       setUser({ username, token: access_token });
@@ -73,6 +82,9 @@ export default function LoginPage() {
 
           {error && (
             <div className="text-red-500 text-sm text-center">{error}</div>
+          )}
+          {notice && (
+            <div className="text-green-400 text-sm text-center">{notice}</div>
           )}
 
           <button

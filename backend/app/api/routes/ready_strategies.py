@@ -87,6 +87,8 @@ async def launch_ready_strategy(
     )
     if request.exchange == "cryptorg" and request.account_id is None:
         raise HTTPException(status_code=400, detail="exchange=cryptorg requires account_id")
+    from app.api.routes.me import ensure_bot_capacity
+    await ensure_bot_capacity(db, current_user, adding=len(s.launch_legs))
 
     entry_size = round(request.deposit_usdt * variant.first_order_pct_of_deposit / 100, 2)
     multi = len(s.launch_legs) > 1

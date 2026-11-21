@@ -36,29 +36,41 @@ def test_format_entry_add_exit():
     assert format_event("trailing_stop_moved", {}, "x", "paper", 4) is None  # слишком часто — не шлём
 
 
-@pytest.mark.asyncio
-async def test_notifier_disabled_without_token_and_skips_paper_in_real_mode():
-    n = TelegramNotifier("", "", "all", owner="me")
-    n.notify("position_closed", {"bot_id": 1})
-    assert not n._tasks
-    assert TelegramNotifier("t", "c", "all", owner="").enabled is False  # чей чат — неизвестно
+def _u(**kw):
+    base = dict(id=1, username="me", is_active=True, approved=True, telegram_chat_id=None, telegram_notify="all")
+    return SimpleNamespace(**{**base, **kw})
 
-    n = TelegramNotifier("t", "c", "real", owner="me")
-    n._bot_info = AsyncMock(return_value=("paper bot", "paper", 4, True))
+
+def test_route_per_user():
+    n = TelegramNotifier("t", "owner-chat", "all", owner="me")
+    assert n.route_for(_u()) == ("owner-chat", "all")  # владелец без своей привязки — общий чат
+    assert n.route_for(_u(telegram_chat_id="42")) == ("42", "all")  # своя привязка важнее
+    assert n.route_for(_u(username="anna")) is None  # чужой без привязки — никуда, не в чат владельца
+    assert n.route_for(_u(username="anna", telegram_chat_id="77", telegram_notify="real")) == ("77", "real")
+    assert n.route_for(_u(username="anna", telegram_chat_id="77", approved=False)) is None
+    assert n.route_for(_u(username="anna", telegram_chat_id="77", is_active=False)) is None
+    assert n.route_for(_u(username="anna", telegram_chat_id="77", telegram_notify="off")) is None
+    assert TelegramNotifier("t", "c", "real", owner="me").route_for(_u()) == ("c", "real")  # глобально real
+    assert TelegramNotifier("", "c", "all", owner="me").enabled is False
+
+
+@pytest.mark.asyncio
+async def test_event_goes_to_bot_owner_chat_and_respects_mode():
+    n = TelegramNotifier("t", "owner-chat", "all", owner="me")
     n.send = AsyncMock(return_value=True)
-    await n._send_event("position_closed", {"bot_id": 1, "pnl": 1.0})
+    n._bot_info = AsyncMock(return_value=("бот Анны", "cryptorg", 4, 2))
+    n._route = AsyncMock(return_value=("77", "all"))
+    await n._send_event("position_closed", {"bot_id": 5, "pnl": 1.0})
+    assert n.send.await_args.args[1] == "77"
+
+    n.send.reset_mock()
+    n._bot_info = AsyncMock(return_value=("бумажный", "paper", 4, 2))
+    n._route = AsyncMock(return_value=("77", "real"))
+    await n._send_event("position_closed", {"bot_id": 6, "pnl": 1.0})
     n.send.assert_not_awaited()
-    n._bot_info = AsyncMock(return_value=("real bot", "cryptorg", 4, True))
-    await n._send_event("position_closed", {"bot_id": 2, "pnl": 1.0})
-    n.send.assert_awaited_once()
 
-
-@pytest.mark.asyncio
-async def test_other_users_bots_never_reach_owner_chat():
-    n = TelegramNotifier("t", "c", "all", owner="me")
-    n._bot_info = AsyncMock(return_value=("чужой бот", "cryptorg", 4, False))
-    n.send = AsyncMock(return_value=True)
-    await n._send_event("position_closed", {"bot_id": 7, "pnl": 100.0})
+    n._route = AsyncMock(return_value=None)  # не привязал Telegram
+    await n._send_event("position_closed", {"bot_id": 6, "pnl": 1.0})
     n.send.assert_not_awaited()
 
 
@@ -66,10 +78,11 @@ async def test_other_users_bots_never_reach_owner_chat():
 async def test_notify_does_not_wait_for_telegram():
     """Торговый цикл не ждёт Telegram: notify возвращается сразу, отправка — отдельной задачей."""
     n = TelegramNotifier("t", "c", "all", owner="me")
-    n._bot_info = AsyncMock(return_value=("b", "paper", 4, True))
+    n._bot_info = AsyncMock(return_value=("b", "paper", 4, 1))
+    n._route = AsyncMock(return_value=("c", "all"))
     started = asyncio.Event()
 
-    async def slow_send(text):
+    async def slow_send(text, chat):
         started.set()
         await asyncio.sleep(10)
 
