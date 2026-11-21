@@ -268,6 +268,8 @@ IDLE ──(лимит)──▶ WAITING ──┐
 
 **Бэкап не пришёл** — `docker logs trading_backup`; ручной запуск `docker exec trading_backup python backup.py now`.
 
+**`ErrCode: 10002` / `invalid request, please check your server timestamp`** — часы сервера расходятся с Bybit. Бэкенд это компенсирует сам (`adapters/bybit_clock.py`: поправка по `/v5/market/time` при старте и раз в 10 мин, в логе `[BybitClock]` с величиной расхождения), но синхронизацию времени на VPS всё равно стоит включить: `apt-get install -y chrony && systemctl enable --now chrony`.
+
 **Bybit-бот не открывает позицию** — проверить, что у бота выбран `bybit_account_id`, ключи имеют торговые права для Unified/linear, а флаг `testnet` совпадает с типом ключей; в логах backend искать `[Bybit]`.
 
 **Пирамидинг не срабатывает** — проверить, доходят ли тики цены: в логах backend искать `[TICK]`, `[AVG TRIGGER]`; в логах `price-tracker` — реально ли стримится символ (`GET /subscriptions` на price-tracker); частая причина — сбой HTTP-вызова backend → price-tracker при регистрации стратегии (см. `_notify_price_tracker` в `backend/app/services/websocket.py`).

@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
+    # поправка часов для подписанных запросов Bybit: при старте и раз в 10 мин
+    from app.adapters import bybit_clock
+    bybit_clock.install()
+    clock_task = asyncio.create_task(bybit_clock.resync_loop())
     await init_redis()
     logger.info("Redis initialized")
 
@@ -47,6 +51,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    clock_task.cancel()
     await user_alerts.stop()
     await telegram_bot.stop()
     await exchange_watch.stop()
