@@ -124,17 +124,21 @@ def dump_encrypted(url: str, out: Path, passphrase: str) -> None:
     tmp.rename(out)
 
 
-def verify(path: Path, passphrase: str) -> int:
-    """Расшифровать и прочитать оглавление дампа. Возвращает число объектов."""
+def verify(path: Path, passphrase: str) -> None:
+    """Расшифровать файл целиком и прогнать весь архив через pg_restore (в /dev/null).
+
+    Не `pg_restore -l`: он читает только оглавление и выходит, а openssl, ещё пишущий
+    в закрытую трубу, падает с EPIPE — любой дамп больше буфера трубы (~64 КБ) «не проходил».
+    """
     env = {**os.environ, "BACKUP_PASSPHRASE": passphrase}
     with path.open("rb") as fh:
-        dec = subprocess.Popen(OPENSSL + ["-d"], stdin=fh, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        lst = subprocess.run(["pg_restore", "-l"], stdin=dec.stdout, capture_output=True)
+        dec = subprocess.Popen(OPENSSL + ["-d"], stdin=fh, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        rst = subprocess.run(["pg_restore", "-f", "/dev/null"], stdin=dec.stdout,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         dec.stdout.close()
         dec.wait()
-    if dec.returncode != 0 or lst.returncode != 0:
+    if dec.returncode != 0 or rst.returncode != 0:
         raise RuntimeError("проверка не прошла: дамп не расшифровывается или не читается pg_restore")
-    return sum(1 for line in lst.stdout.decode().splitlines() if line and not line.startswith(";"))
 
 
 def _scrub(text: str, url: str) -> str:
