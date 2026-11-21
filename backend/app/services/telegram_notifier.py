@@ -8,6 +8,9 @@
 а services/alerter — по bots-health.
 
 Настройки: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_NOTIFY = all | real | off.
+Чат один — владельца платформы, поэтому уведомления только по ботам пользователя
+ADMIN_USERNAME: сделки других зарегистрированных пользователей в него не попадают.
+Пустой ADMIN_USERNAME — уведомлений нет (не знаем, чей это чат).
 """
 import asyncio
 import logging
@@ -70,25 +73,30 @@ def format_event(event: str, d: Dict, name: str, exchange: str, order_count: Opt
 
 
 class TelegramNotifier:
-    def __init__(self, token: str = "", chat_id: str = "", mode: str = "all"):
+    def __init__(self, token: str = "", chat_id: str = "", mode: str = "all", owner: str = ""):
         self.token, self.chat_id, self.mode = token, chat_id, (mode or "all").lower()
-        self._bots: Dict[int, Tuple[str, str, Optional[int]]] = {}  # bot_id -> (имя, площадка, ордеров в сетке)
+        self.owner = owner  # логин, чьи боты шлём в чат
+        # bot_id -> (имя, площадка, ордеров в сетке, бот владельца чата)
+        self._bots: Dict[int, Tuple[str, str, Optional[int], bool]] = {}
         self._tasks: Set[asyncio.Task] = set()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.token and self.chat_id) and self.mode != "off"
+        return bool(self.token and self.chat_id and self.owner) and self.mode != "off"
 
-    async def _bot_info(self, bot_id: int) -> Tuple[str, str, Optional[int]]:
+    async def _bot_info(self, bot_id: int) -> Tuple[str, str, Optional[int], bool]:
         if bot_id not in self._bots:
             from sqlalchemy import select
             from app.core.database import AsyncSessionLocal
-            from app.models import Bot
+            from app.models import Bot, User
             async with AsyncSessionLocal() as db:
-                bot = (await db.execute(select(Bot).where(Bot.id == bot_id))).scalar_one_or_none()
-            if bot is None:
-                return f"бот {bot_id}", "", None
-            self._bots[bot_id] = (bot.name, bot.exchange, (bot.config or {}).get("order_count"))
+                row = (await db.execute(select(Bot, User.username).join(User, User.id == Bot.user_id, isouter=True)
+                                        .where(Bot.id == bot_id))).first()
+            if row is None:
+                return f"бот {bot_id}", "", None, False
+            bot, username = row
+            self._bots[bot_id] = (bot.name, bot.exchange, (bot.config or {}).get("order_count"),
+                                  username == self.owner)
         return self._bots[bot_id]
 
     def forget(self, bot_id: int) -> None:
@@ -105,7 +113,9 @@ class TelegramNotifier:
 
     async def _send_event(self, event: str, data: Dict) -> None:
         try:
-            name, exchange, order_count = await self._bot_info(data["bot_id"])
+            name, exchange, order_count, owners = await self._bot_info(data["bot_id"])
+            if not owners:
+                return  # бот другого пользователя — не в чат владельца платформы
             if self.mode == "real" and exchange == "paper":
                 return
             text = format_event(event, data, name, exchange, order_count)
@@ -134,4 +144,5 @@ class TelegramNotifier:
         return False
 
 
-notifier = TelegramNotifier(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID, settings.TELEGRAM_NOTIFY)
+notifier = TelegramNotifier(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID, settings.TELEGRAM_NOTIFY,
+                            owner=settings.ADMIN_USERNAME)
