@@ -85,9 +85,10 @@ def test_server_registers_tools_and_prompts():
     tools = {t.name for t in run(km.mcp.list_tools())}
     assert tools == {"bots_health", "list_bots", "get_trades", "portfolio_summary", "get_market_context",
                      "get_position_context", "reconcile_position", "log_review", "list_reviews",
-                     "what_changed", "forward_test_sets", "reconcile_trades", "account_overview"}
+                     "what_changed", "forward_test_sets", "reconcile_trades", "account_overview",
+                     "research_bases", "hypothesis_test", "hypothesis_status", "hypothesis_reveal", "hypotheses_list"}
     prompts = {p.name for p in run(km.mcp.list_prompts())}
-    assert prompts == {"health_check", "monthly_review", "second_opinion"}
+    assert prompts == {"health_check", "monthly_review", "second_opinion", "test_hypothesis"}
 
 
 def test_list_bots_filters_exchange():
@@ -190,3 +191,15 @@ def test_account_overview_reads_accounts_with_key_and_formats_time(fake_api):
     assert main["closed"][0]["closed_at"].startswith("2026-")
     assert r["accounts"]["NoKey"]["ok"] is False
     assert "monthly_review" and "reconcile_trades(" in km.monthly_review("2026-11-18")
+
+
+def test_hypothesis_tools_post_to_journal(fake_api):
+    run(km.hypothesis_test("тейк 6%", "alt_short", {"tp_percent": 6}, "отношение на обучающем ≥ базы"))
+    method, path, body = fake_api.posted[-1]
+    assert (method, path) == ("POST", "/api/research/hypotheses")
+    assert body["changes"] == {"tp_percent": 6} and body["success_criterion"].startswith("отношение")
+    run(km.hypothesis_reveal(7, "passes", "лучше базы"))
+    assert fake_api.posted[-1][1] == "/api/research/hypotheses/7/reveal"
+    assert fake_api.posted[-1][2] == {"train_decision": "passes", "note": "лучше базы"}
+    text = km.test_hypothesis("тейк побольше")
+    assert "ДО прогона" in text and "2027-02-18" in text and "hypothesis_reveal" in text

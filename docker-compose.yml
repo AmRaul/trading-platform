@@ -247,8 +247,8 @@ services:
   backtester-web:
     image: ${BACKTESTER_IMAGE:-ghcr.io/amraul/trading-platform-backtester-web:latest}
     build:
-      context: ./services/backtester
-      dockerfile: Dockerfile.web
+      context: .  # нужен backend/app/domain (логика позиции бота) — см. Dockerfile.web
+      dockerfile: services/backtester/Dockerfile.web
     container_name: backtester_web
     restart: unless-stopped
     ports:

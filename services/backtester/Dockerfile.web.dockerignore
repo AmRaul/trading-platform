@@ -1,0 +1,17 @@
+# Контекст сборки backtester-web — корень репозитория; берём только нужное
+*
+!services/backtester/
+!backend/app/__init__.py
+!backend/app/domain/__init__.py
+!backend/app/domain/trading/
+
+# данные, результаты и логи — тома, не образ (данные ещё и 185+ МБ)
+services/backtester/data/
+services/backtester/results/
+services/backtester/reports/
+services/backtester/logs/
+services/backtester/backtests/
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+services/backtester/test_*

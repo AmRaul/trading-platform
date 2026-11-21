@@ -1305,6 +1305,75 @@ def optimization_results_page(task_id):
     return render_template('optimization_results.html', task_id=task_id)
 
 
+# --- гипотезы (kandle MCP: журнал гипотез, hypothesis_runner.py) ---------------------------------
+# Задачи — в той же очереди, что бэктесты; итог пишется на диск (results/research), переживает рестарт.
+RESEARCH_DIR = Path(__file__).resolve().parent / 'results' / 'research'
+research_tasks = {}  # task_id -> {'status', 'progress', 'error', 'base', 'changes'}
+
+
+def _research_file(task_id):
+    return RESEARCH_DIR / f'{task_id}.json'
+
+
+def _run_research(task_id, base, changes):
+    import hypothesis_runner as hr
+    task = research_tasks[task_id]
+    backtest_slots.acquire(task_id)
+    try:
+        task['status'] = 'running'
+        result = hr.run_hypothesis(base, changes, RESEARCH_DIR,
+                                   progress=lambda msg: task.__setitem__('progress', msg))
+        RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+        _research_file(task_id).write_text(json.dumps(result, ensure_ascii=False, default=str))
+        task['status'] = 'completed'
+    except Exception as e:
+        logger.exception(f'[RESEARCH] {task_id}')
+        task['status'], task['error'] = 'error', str(e)[:500]
+    finally:
+        backtest_slots.release()
+
+
+@app.route('/api/research/bases')
+def research_bases():
+    import hypothesis_runner as hr
+    return jsonify(hr.bases_public())
+
+
+@app.route('/api/research/run', methods=['POST'])
+def research_run():
+    import hypothesis_runner as hr
+    body = request.json or {}
+    base, changes = body.get('base'), body.get('changes') or {}
+    try:
+        hr.resolve(base, changes)  # проверить до постановки в очередь
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    task_id = str(uuid.uuid4())
+    research_tasks[task_id] = {'status': 'pending', 'progress': 'в очереди', 'error': None,
+                               'base': base, 'changes': changes}
+    threading.Thread(target=_run_research, args=(task_id, base, changes), daemon=True).start()
+    return jsonify({'task_id': task_id, 'status': 'pending'})
+
+
+@app.route('/api/research/status/<task_id>')
+def research_status(task_id):
+    task = research_tasks.get(task_id)
+    if task is None:
+        if _research_file(task_id).exists():  # бэктестер перезапускался — итог на диске
+            return jsonify({'task_id': task_id, 'status': 'completed'})
+        return jsonify({'error': 'Задача не найдена'}), 404
+    return jsonify({'task_id': task_id, 'status': task['status'], 'progress': task['progress'],
+                    'error': task['error'], 'queue_position': backtest_slots.position(task_id)})
+
+
+@app.route('/api/research/result/<task_id>')
+def research_result(task_id):
+    f = _research_file(task_id)
+    if not f.exists():
+        return jsonify({'error': 'Результата нет'}), 404
+    return app.response_class(f.read_text(), mimetype='application/json')
+
+
 @app.route('/api/optimize/start', methods=['POST'])
 @require_optimizer_access
 def start_optimization():

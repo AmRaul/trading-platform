@@ -163,7 +163,7 @@ jobs:
             context: ./services/price-tracker
             dockerfile: ./services/price-tracker/Dockerfile
           - name: backtester-web
-            context: ./services/backtester
+            context: .
             dockerfile: ./services/backtester/Dockerfile.web
           - name: kandle-mcp
             context: ./services/mcp
@@ -304,6 +304,10 @@ jobs:
             BACKUP_PASSPHRASE='${BACKUP_PASSPHRASE}'
             EOF
             sed -i 's/^[[:space:]]*//' .env
+
+            # бэктестер работает под uid 1000: история (data) и итоги гипотез (results) — его папки
+            mkdir -p services/backtester/data services/backtester/results
+            chown -R 1000:1000 services/backtester/data services/backtester/results || true
 
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             docker compose pull --quiet

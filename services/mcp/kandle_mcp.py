@@ -44,6 +44,8 @@ kandle — платформа торговых ботов пользовател
    get_position_context — не пересчитывай из свечей сам. Результат на стопе/тейке, когда
    трейлинг двинет стоп, следующий ордер — из position_levels в get_position_context.
 4a. «Что нового / что изменилось» — what_changed (без since — с прошлой проверки).
+4b. Проверка идей бэктестом — только через журнал гипотез (prompt test_hypothesis): критерий до прогона,
+   отложенный период — один раз после решения. Находки — кандидаты в следующий форвард-тест.
 4. Разборы (monthly_review, health_check, second_opinion) записывай через log_review.
    У second_opinion вердикт обязан быть проверяемым: action, first_hit, confidence, key_risk.
 5. Суммы — USDT. Время — UTC.
@@ -359,6 +361,49 @@ async def account_overview(account_id: Optional[int] = None, days: int = 30) -> 
     return {"accounts": out}
 
 
+@mcp.tool(annotations=READ)
+async def research_bases() -> Dict:
+    """Какие стратегии можно проверять гипотезами (alt_short — шорт альтов, mrc_dca — MRC DCA BTC),
+    какие параметры менять, их значения у живых ботов и допустимые пределы, периоды
+    (обучающий 2021-01 → 2024-07, отложенный 2024-07 → 2026-10)."""
+    return await api.get("/api/research/bases")
+
+
+@mcp.tool()
+async def hypothesis_test(title: str, base: str, changes: Dict[str, Any], success_criterion: str,
+                          rationale: Optional[str] = None) -> Dict:
+    """Записать гипотезу в журнал и поставить бэктест в очередь (вариант против базы на тех же данных).
+    ДО вызова сформулируй success_criterion — проверяемо, с числами (напр. «доходность/просадка на
+    обучающем ≥ базы и просадка ≤ 25%»); потом его не поменять. changes — только параметры из
+    research_bases. Прогон асинхронный (секунды–минуты): статус — hypothesis_status(id).
+    attempt — какая это попытка той же идеи (та же стратегия и те же параметры)."""
+    return await api.request("POST", "/api/research/hypotheses", json={
+        "title": title, "base": base, "changes": changes, "success_criterion": success_criterion,
+        "rationale": rationale})
+
+
+@mcp.tool(annotations=READ)
+async def hypothesis_status(hypothesis_id: int) -> Dict:
+    """Статус прогона; когда готово — результат ТОЛЬКО на обучающем периоде (вариант, база, разница).
+    Отложенный период скрыт до hypothesis_reveal."""
+    return await api.get(f"/api/research/hypotheses/{hypothesis_id}")
+
+
+@mcp.tool()
+async def hypothesis_reveal(hypothesis_id: int, train_decision: str, note: Optional[str] = None) -> Dict:
+    """Зафиксировать решение по обучающему периоду (train_decision: passes | fails — по заранее
+    записанному критерию) и ОДИН раз открыть отложенный период и итог: подтвердилась ли гипотеза.
+    Решение после этого не меняется."""
+    return await api.request("POST", f"/api/research/hypotheses/{hypothesis_id}/reveal",
+                             json={"train_decision": train_decision, "note": note})
+
+
+@mcp.tool(annotations=READ)
+async def hypotheses_list(base: Optional[str] = None, limit: int = 30) -> List[Dict]:
+    """Журнал гипотез от новых к старым: что проверяли, номер попытки, статус, подтвердилась ли."""
+    return await api.get("/api/research/hypotheses", base=base, limit=limit)
+
+
 @mcp.tool()
 async def log_review(kind: str, summary: str, bot_id: Optional[int] = None, position_id: Optional[int] = None,
                      symbol: Optional[str] = None, verdict: Optional[Dict[str, Any]] = None) -> Dict:
@@ -427,6 +472,35 @@ def monthly_review(since: str, until: Optional[str] = None) -> str:
 5. Вывод одной строкой: «в пределах ожиданий» / «хуже ожиданий, но в норме» / «критерий остановки».
    Никаких советов менять параметры — до 2027-02-18 они заморожены.
 6. log_review(kind="monthly_review", summary=<итог с цифрами>)."""
+
+
+@mcp.prompt()
+def test_hypothesis(idea: str) -> str:
+    """Проверить идею бэктестом с защитой от подгонки (журнал гипотез)."""
+    return f"""Проверим идею: «{idea}».
+
+Правила (защита от подгонки — их не обходим):
+- Меняем только параметры из research_bases; новую логику входа бэктестом с телефона не проверить —
+  скажи прямо, что это работа за ноутбуком.
+- Критерий успеха — ДО прогона, с числами, сравнение с базой. После прогона его не меняем.
+- Сначала смотрим только обучающий период (2021-01 → 2024-07). Отложенный — один раз, после решения.
+- Одна гипотеза — один вариант. Подбирать значение перебором («а если 5.5? а 6.5?») — это подгонка:
+  если хочется перебирать, честно скажи, что каждая попытка снижает доверие к результату.
+- Любая находка — кандидат в СЛЕДУЮЩИЙ форвард-тест. Текущие бумажные боты заморожены до 2027-02-18:
+  не предлагай их менять.
+
+Шаги:
+1. research_bases — что можно менять и текущие значения. Переведи идею в changes; если не переводится —
+   объясни и остановись.
+2. Сформулируй гипотезу, почему должно сработать (rationale) и success_criterion. Покажи мне и спроси
+   «запускаем?» — критерий потом не поменять.
+3. hypothesis_test(...). Если attempt ≥ 3 — предупреди о подгонке до прогона.
+4. hypothesis_status(id) — пока не готово, скажи, что идёт (место в очереди), и не выдумывай результат.
+5. Обучающий период: вариант против базы по доходности, просадке, отношению, худшему месяцу, числу сделок.
+   Реши строго по критерию: passes или fails, одной фразой почему.
+6. hypothesis_reveal(id, train_decision, note) — отложенный период и итог. Расскажи: подтвердилась ли,
+   совпало ли с обучающим, предупреждения.
+7. log_review(kind="note", summary=<гипотеза, критерий, обучающий, отложенный, итог>)."""
 
 
 @mcp.prompt()
