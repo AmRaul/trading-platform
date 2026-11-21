@@ -41,6 +41,13 @@ BASES: Dict[str, Dict] = {
                            "hint": "трейлинг = trailing_u × медианный дневной диапазон монеты"},
             "tp_percent": {"default": 100.0, "min": 1.0, "max": 100.0, "hint": "100 — без тейка"},
             "first_order": {"default": 250.0, "min": 50.0, "max": 1000.0},
+            # Кульминация объёма против шорта: растущая 15m-свеча с объёмом ≥ climax_k × среднее за сутки
+            "climax_k": {"default": 3.0, "min": 1.5, "max": 10.0,
+                         "hint": "порог кульминации: объём свечи / средний объём за 96 свечей"},
+            "climax_block_hours": {"default": 0, "min": 0, "max": 48, "kind": "int",
+                                   "hint": "не открывать шорт N часов после кульминации; 0 — выкл"},
+            "climax_trail_u": {"default": 0.0, "min": 0.0, "max": 1.0,
+                               "hint": "после кульминации против позиции стоп = close + X×U; 0 — выкл"},
         },
     },
     "mrc_dca": {
@@ -192,6 +199,96 @@ def period_stats(equity: pd.Series, deposit: float, trades: pd.DataFrame, a: pd.
 
 # --- стратегии --------------------------------------------------------------------------
 
+def climax_mask(df: pd.DataFrame, k: float) -> np.ndarray:
+    """Кульминация против шорта: свеча закрылась ростом, объём ≥ k × средний за 96 предыдущих свечей."""
+    avg = df["volume"].rolling(96).mean().shift(1)
+    return ((df["close"] > df["open"]) & (df["volume"] >= k * avg)).fillna(False).to_numpy()
+
+
+def alt_coin_trades(coin: str, p: Dict, coin_cfg: Callable) -> List:
+    """Сделки шорта по монете — как short_portfolio.coin_trades, плюс фильтры кульминации.
+    При выключенных climax_* — ровно тот же расчёт (сделки базы не меняются)."""
+    import short_portfolio as sp
+    import trend_pullback_pyramid as tpp
+
+    df = sp.load_15m(coin)
+    df = df[(df["timestamp"] >= sp.START) & (df["timestamp"] < sp.END)].reset_index(drop=True)
+    sig = tpp.regime(df)[1] & tpp.triggers(df)["st"][1]
+    climax = climax_mask(df, p["climax_k"]) if (p["climax_block_hours"] or p["climax_trail_u"]) else None
+    if p["climax_block_hours"]:
+        window = int(p["climax_block_hours"] * 4) + 1  # бар кульминации и следующие N часов
+        recent = pd.Series(climax).rolling(window, min_periods=1).max().astype(bool).to_numpy()
+        sig = sig & ~recent
+    rel = sp.rel_strength(df, sp.load_15m("BTC"))
+    gpos = sp.GRID_IDX.get_indexer(df["timestamp"])
+    cfg = coin_cfg(df, "p")
+    trail_pct = 0.0
+    if p["climax_trail_u"]:
+        import donchian_pyramid as dp
+        trail_pct = p["climax_trail_u"] * dp.vol_unit(df)
+    trades = []
+    for i in np.where(sig)[0]:
+        t = sp.one_trade(df, i, cfg) if not trail_pct else one_trade_climax_trail(df, i, cfg, climax, trail_pct)
+        if t and gpos[i] >= 0 and gpos[t[0]] >= 0:
+            trades.append((int(gpos[i]), int(gpos[t[0]]), t[1], t[2],
+                           0.0 if np.isnan(rel[i]) else float(rel[i]), t[3]))
+    return trades
+
+
+def one_trade_climax_trail(df, i, cfg, climax, trail_pct, side="SHORT"):
+    """short_portfolio.one_trade + подтяжка стопа после кульминации против позиции:
+    по закрытию такой свечи стоп = close × (1 + trail_pct%), если это ближе текущего.
+    Дальше обычный трейлинг (стоп только подтягивается)."""
+    import donchian_pyramid as dp
+    from app.domain.trading.entities import OrderInfo
+    from app.domain.trading.position_calculator import PositionCalculator
+    from mrc_supertrend_pyramid import FUNDING_15M
+
+    s = 1 if side == "LONG" else -1
+    o, h, l, c = df["open"].values, df["high"].values, df["low"].values, df["close"].values
+    calc = PositionCalculator(cfg)
+    calc.add_order(OrderInfo(1, c[i], cfg["entry_size_usdt"]))
+    sl, _ = calc.calculate_stop_loss(side, calc.orders, c[i])
+    fees, funding = cfg["entry_size_usdt"] * dp.FEE, 0.0
+    floating = [-fees]
+    for j in range(i + 1, len(df)):
+        funding += s * calc.get_total_size() * FUNDING_15M
+        path = [o[j], l[j], h[j], c[j]] if c[j] >= o[j] else [o[j], h[j], l[j], c[j]]
+        exit_price = None
+        for idx, px in enumerate(path):
+            gap = idx == 0
+            if calc.is_stop_loss_hit(side, px, sl):
+                exit_price = px if gap else sl * (1 - s * dp.SL_SLIPPAGE)
+                break
+            tp = calc.take_profit_price(side)
+            if tp and (px - tp) * s >= 0:
+                exit_price = px if gap else tp
+                break
+            added = False
+            while calc.should_add_order(side, px, calc.get_last_order_price()):
+                level = calc.get_last_order_price() * (1 + s * (cfg["step_percent"] / 100 - 0.0005))
+                fill = px if gap else level
+                size = calc.calculate_next_order_size()
+                calc.add_order(OrderInfo(len(calc.orders) + 1, fill, size))
+                fees += size * dp.FEE
+                sl, _ = calc.calculate_stop_loss(side, calc.orders, fill)
+                added = True
+            if not added:
+                new_sl, _ = calc.calculate_stop_loss(side, calc.orders, px)
+                if sl == 0 or (new_sl - sl) * s > 0:
+                    sl = new_sl
+        if exit_price is None and climax[j]:
+            tight = c[j] * (1 - s * trail_pct / 100)  # шорт: стоп над ценой
+            if sl == 0 or (tight - sl) * s > 0:
+                sl = tight
+        avg, size = calc.calculate_average_price(calc.orders), calc.get_total_size()
+        if exit_price is not None:
+            fees += size * (exit_price / avg) * dp.FEE
+            return j, s * size * (exit_price - avg) / avg - fees - funding, len(calc.orders), np.array(floating)
+        floating.append(s * size * (c[j] - avg) / avg - fees - funding)
+    return None
+
+
 def run_alt_short(p: Dict, progress: Callable[[str], None]) -> Dict:
     import donchian_pyramid as dp
     import mrc_supertrend_pyramid as msp
@@ -214,11 +311,10 @@ def run_alt_short(p: Dict, progress: Callable[[str], None]) -> Dict:
                    trailing_percent=round(dp.vol_unit(df) * p["trailing_u"], 1))
         return cfg
 
-    sp.coin_cfg = coin_cfg
     by_coin = {}
     for coin in p["coins"]:
         progress(f"считаю {coin}USDT")
-        by_coin[coin] = sp.coin_trades((coin, ["p"]))[1]["p"]
+        by_coin[coin] = alt_coin_trades(coin, p, coin_cfg)
     pnl, taken, _ = sp.portfolio(by_coin, len(p["coins"]), "first")
     equity = pd.Series(deposit + pnl, index=sp.GRID_IDX)
     idx = sp.GRID_IDX

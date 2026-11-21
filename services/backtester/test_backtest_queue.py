@@ -47,3 +47,20 @@ def test_two_slots_run_in_parallel():
     assert slots.position("c") is None
     slots.release()
     assert slots.acquire("c", timeout=0.1)
+
+
+def test_climax_mask_marks_bullish_volume_spike():
+    import pandas as pd
+    import hypothesis_runner as hr
+    n = 100
+    df = pd.DataFrame({"open": [10.0] * n, "close": [9.9] * n, "volume": [100.0] * n})
+    df.loc[98, ["close", "volume"]] = [10.5, 400.0]   # рост на объёме ×4 — кульминация
+    df.loc[99, ["close", "volume"]] = [9.5, 500.0]    # падение на объёме — против лонга, не против шорта
+    m = hr.climax_mask(df, 3.0)
+    assert m[98] and not m[99] and m.sum() == 1
+
+
+def test_climax_params_off_by_default():
+    import hypothesis_runner as hr
+    p = hr.resolve("alt_short", {})
+    assert p["climax_block_hours"] == 0 and p["climax_trail_u"] == 0.0
