@@ -89,6 +89,10 @@ class SignalEntryScheduler:
             if key not in cache:
                 cache[key] = await self._check.execute(bot.symbol, bot.side, cfg, now_ms)
             signal = cache[key]
+            if signal.data_missing:
+                # вход Supertrend — разворот ровно на последней свече: пропуск проверки = пропуск сделки.
+                # Свеча та же до следующего закрытия, поэтому повторяем на следующем тике.
+                self._last_checked.pop(bot.id, None)
             self.last_result[bot.id] = {
                 "checked_at_ms": now_ms, "reason": signal.reason, "triggered": signal.triggered,
                 "risk_zone": signal.risk_zone, "trend_ok": signal.trend_ok,
@@ -114,7 +118,10 @@ class SignalEntryScheduler:
                 signal = await self._check.execute_exit(bot.symbol, bot.side, cfg, now_ms)
             except Exception as e:
                 logger.error(f"[SignalScheduler] exit check bot={bot.id} failed: {e}")
+                self._last_checked.pop(key, None)
                 continue
+            if signal.data_missing:
+                self._last_checked.pop(key, None)
             self.last_result[bot.id] = {"checked_at_ms": now_ms, "reason": signal.reason,
                                         "triggered": signal.triggered, "exit_level": signal.trend_ema}
             logger.info(f"[SignalScheduler] bot={bot.id} {bot.symbol} {bot.side} exit check → {signal.reason}")

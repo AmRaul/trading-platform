@@ -26,6 +26,8 @@ class EntrySignalResult:
     trend_close: Optional[float] = None
     trend_ema: Optional[float] = None
     reason: str = ""
+    # биржа не отдала свечи (ошибка/таймаут) — планировщик повторит проверку той же свечи
+    data_missing: bool = False
 
 
 def _frame(candles: List[Dict]) -> pd.DataFrame:
