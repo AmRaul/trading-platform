@@ -26,36 +26,48 @@ START, SPLIT, END = pd.Timestamp("2021-01-01"), pd.Timestamp("2024-07-01"), pd.T
 ALT_COINS = ["SOL", "AVAX", "LINK", "ETH", "XRP"]
 
 # Что можно менять и в каких пределах. Значения по умолчанию — параметры живых ботов.
+def _pyramid_params(coins: List[str]) -> Dict:
+    return {
+        "coins": {"default": coins, "kind": "coins"},
+        "order_count": {"default": 4, "min": 1, "max": 8, "kind": "int"},
+        "step_percent": {"default": 0.5, "min": 0.2, "max": 5.0},
+        "sl_percent": {"default": 2.0, "min": 0.5, "max": 10.0},
+        "trailing_u": {"default": 1.0, "min": 0.2, "max": 3.0,
+                       "hint": "трейлинг = trailing_u × медианный дневной диапазон монеты"},
+        "tp_percent": {"default": 100.0, "min": 1.0, "max": 100.0, "hint": "100 — без тейка"},
+        "first_order": {"default": 250.0, "min": 50.0, "max": 1000.0},
+        # Кульминация объёма против позиции: 15m-свеча против неё с объёмом ≥ climax_k × среднее за сутки
+        "climax_k": {"default": 3.0, "min": 1.5, "max": 10.0,
+                     "hint": "порог кульминации: объём свечи / средний объём за 96 свечей"},
+        "climax_block_hours": {"default": 0, "min": 0, "max": 48, "kind": "int",
+                               "hint": "не входить N часов после кульминации против направления; 0 — выкл"},
+        "climax_trail_u": {"default": 0.0, "min": 0.0, "max": 1.0,
+                           "hint": "после кульминации против позиции стоп = close ± X×U; 0 — выкл"},
+        # Фильтры по BTC: входить только по направлению рынка и в монету сильнее/слабее BTC
+        "btc_regime": {"default": 0, "min": 0, "max": 1, "kind": "int",
+                       "hint": "1 — вход только когда у BTC тот же режим 4h (вверх для лонга, вниз для шорта)"},
+        "min_rel_pct": {"default": -100.0, "min": -100.0, "max": 100.0,
+                        "hint": "сила к BTC за 7 дней, п.п.: лонг — монета ≥ BTC + X, шорт — ≤ BTC − X; -100 — выкл"},
+    }
+
+
 BASES: Dict[str, Dict] = {
     "alt_short": {
         "title": "Шорт альтов · пирамидинг · 5 монет",
         "description": "режим 4h вниз (EMA50 < EMA200, close < EMA200) + разворот Supertrend 15m; "
                        "пирамидинг в прибыль, стоп от средней, трейлинг в единицах дневной волатильности монеты",
         "deposit": 5000.0,
-        "params": {
-            "coins": {"default": ALT_COINS, "kind": "coins"},
-            "order_count": {"default": 4, "min": 1, "max": 8, "kind": "int"},
-            "step_percent": {"default": 0.5, "min": 0.2, "max": 5.0},
-            "sl_percent": {"default": 2.0, "min": 0.5, "max": 10.0},
-            "trailing_u": {"default": 1.0, "min": 0.2, "max": 3.0,
-                           "hint": "трейлинг = trailing_u × медианный дневной диапазон монеты"},
-            "tp_percent": {"default": 100.0, "min": 1.0, "max": 100.0, "hint": "100 — без тейка"},
-            "first_order": {"default": 250.0, "min": 50.0, "max": 1000.0},
-            # Кульминация объёма против шорта: растущая 15m-свеча с объёмом ≥ climax_k × среднее за сутки
-            "climax_k": {"default": 3.0, "min": 1.5, "max": 10.0,
-                         "hint": "порог кульминации: объём свечи / средний объём за 96 свечей"},
-            "climax_block_hours": {"default": 0, "min": 0, "max": 48, "kind": "int",
-                                   "hint": "не открывать шорт N часов после кульминации; 0 — выкл"},
-            "climax_trail_u": {"default": 0.0, "min": 0.0, "max": 1.0,
-                               "hint": "после кульминации против позиции стоп = close + X×U; 0 — выкл"},
-        },
+        "side": "SHORT",
+        "params": _pyramid_params(ALT_COINS),
     },
     "mrc_dca": {
-        "title": "MRC DCA · BTC 15m Long",
-        "description": "цена во внешней полосе MRC 15m при BTC выше EMA дневки; страховочные в просадку, "
+        "title": "MRC DCA · 15m Long (BTC; монеты можно сменить или добавить)",
+        "description": "цена во внешней полосе MRC 15m при монете выше своей EMA дневки; страховочные в просадку, "
                        "тейк от средней, стоп от средней после полной сетки",
-        "deposit": 5700.0,
+        "deposit_per_coin": 5700.0,
         "params": {
+            "coins": {"default": ["BTC"], "kind": "coins",
+                      "hint": "каждая монета — свой бот с депозитом 5700; итог — сумма"},
             "safety_orders": {"default": 4, "min": 1, "max": 8, "kind": "int"},
             "step_percent": {"default": 1.55, "min": 0.3, "max": 5.0},
             "martingale": {"default": 2.0, "min": 1.0, "max": 3.0},
@@ -66,11 +78,26 @@ BASES: Dict[str, Dict] = {
             "first_order": {"default": 280.0, "min": 50.0, "max": 1000.0},
         },
     },
+    "trend_long": {
+        "title": "Лонг по тренду · пирамидинг · ETH (зеркало шорта альтов)",
+        "description": "режим 4h вверх (EMA50 > EMA200, close > EMA200) + разворот Supertrend 15m вверх; "
+                       "пирамидинг в прибыль, стоп от средней, трейлинг в единицах дневной волатильности. "
+                       "Депозит $1000 на монету — полная позиция 1:1, как у шорта альтов",
+        "deposit_per_coin": 1000.0,
+        "side": "LONG",
+        "params": _pyramid_params(["ETH"]),
+    },
 }
 
 
+def deposit_of(base: str, params: Dict) -> float:
+    b = BASES[base]
+    return b["deposit"] if "deposit" in b else b["deposit_per_coin"] * len(params["coins"])
+
+
 def bases_public() -> Dict:
-    return {k: {"title": b["title"], "description": b["description"], "deposit": b["deposit"],
+    return {k: {"title": b["title"], "description": b["description"],
+                "deposit": deposit_of(k, {p: v["default"] for p, v in b["params"].items()}),
                 "params": {p: {kk: vv for kk, vv in spec.items()} for p, spec in b["params"].items()},
                 "periods": {"train": [str(START.date()), str(SPLIT.date())], "holdout": [str(SPLIT.date()), str(END.date())]}}
             for k, b in BASES.items()}
@@ -88,9 +115,9 @@ def resolve(base: str, changes: Dict) -> Dict:
     for k, v in changes.items():
         s = spec[k]
         if s.get("kind") == "coins":
-            coins = [str(c).upper().removesuffix("USDT") for c in (v or [])]
-            if not coins or len(coins) > 10:
-                raise ValueError("coins: от 1 до 10 монет")
+            coins = list(dict.fromkeys(str(c).upper().removesuffix("USDT") for c in (v or [])))
+            if not coins or len(coins) > 10 or not all(c.isalnum() and len(c) <= 12 for c in coins):
+                raise ValueError("coins: от 1 до 10 тикеров, например [\"ETH\", \"SOL\"]")
             params[k] = coins
             continue
         try:
@@ -199,27 +226,40 @@ def period_stats(equity: pd.Series, deposit: float, trades: pd.DataFrame, a: pd.
 
 # --- стратегии --------------------------------------------------------------------------
 
-def climax_mask(df: pd.DataFrame, k: float) -> np.ndarray:
-    """Кульминация против шорта: свеча закрылась ростом, объём ≥ k × средний за 96 предыдущих свечей."""
+def climax_mask(df: pd.DataFrame, k: float, side: str = "SHORT") -> np.ndarray:
+    """Кульминация против позиции: свеча против неё (для шорта — рост, для лонга — падение),
+    объём ≥ k × средний за 96 предыдущих свечей."""
     avg = df["volume"].rolling(96).mean().shift(1)
-    return ((df["close"] > df["open"]) & (df["volume"] >= k * avg)).fillna(False).to_numpy()
+    against = (df["close"] > df["open"]) if side == "SHORT" else (df["close"] < df["open"])
+    return (against & (df["volume"] >= k * avg)).fillna(False).to_numpy()
 
 
-def alt_coin_trades(coin: str, p: Dict, coin_cfg: Callable) -> List:
-    """Сделки шорта по монете — как short_portfolio.coin_trades, плюс фильтры кульминации.
+def alt_coin_trades(coin: str, p: Dict, coin_cfg: Callable, side: str = "SHORT") -> List:
+    """Сделки пирамиды по монете — как short_portfolio.coin_trades (там только шорт), плюс фильтры
+    кульминации. Лонг — зеркально: режим 4h вверх и разворот Supertrend вверх.
     При выключенных climax_* — ровно тот же расчёт (сделки базы не меняются)."""
     import short_portfolio as sp
     import trend_pullback_pyramid as tpp
 
     df = sp.load_15m(coin)
     df = df[(df["timestamp"] >= sp.START) & (df["timestamp"] < sp.END)].reset_index(drop=True)
-    sig = tpp.regime(df)[1] & tpp.triggers(df)["st"][1]
-    climax = climax_mask(df, p["climax_k"]) if (p["climax_block_hours"] or p["climax_trail_u"]) else None
+    k = 0 if side == "LONG" else 1
+    sig = tpp.regime(df)[k] & tpp.triggers(df)["st"][k]
+    climax = climax_mask(df, p["climax_k"], side) if (p["climax_block_hours"] or p["climax_trail_u"]) else None
     if p["climax_block_hours"]:
         window = int(p["climax_block_hours"] * 4) + 1  # бар кульминации и следующие N часов
         recent = pd.Series(climax).rolling(window, min_periods=1).max().astype(bool).to_numpy()
         sig = sig & ~recent
-    rel = sp.rel_strength(df, sp.load_15m("BTC"))
+    btc = sp.load_15m("BTC")
+    rel = sp.rel_strength(df, btc)
+    if p.get("btc_regime"):
+        b = btc[(btc["timestamp"] >= sp.START) & (btc["timestamp"] < sp.END)].reset_index(drop=True)
+        b_ok = pd.Series(tpp.regime(b)[k], index=b["timestamp"])
+        sig = sig & b_ok.reindex(df["timestamp"], method="ffill").fillna(False).to_numpy(bool)
+    if p.get("min_rel_pct", -100.0) > -100.0:
+        thr = p["min_rel_pct"] / 100
+        ok = rel >= thr if side == "LONG" else rel <= -thr
+        sig = sig & np.nan_to_num(ok, nan=False).astype(bool)
     gpos = sp.GRID_IDX.get_indexer(df["timestamp"])
     cfg = coin_cfg(df, "p")
     trail_pct = 0.0
@@ -228,7 +268,8 @@ def alt_coin_trades(coin: str, p: Dict, coin_cfg: Callable) -> List:
         trail_pct = p["climax_trail_u"] * dp.vol_unit(df)
     trades = []
     for i in np.where(sig)[0]:
-        t = sp.one_trade(df, i, cfg) if not trail_pct else one_trade_climax_trail(df, i, cfg, climax, trail_pct)
+        t = sp.one_trade(df, i, cfg, side) if not trail_pct \
+            else one_trade_climax_trail(df, i, cfg, climax, trail_pct, side)
         if t and gpos[i] >= 0 and gpos[t[0]] >= 0:
             trades.append((int(gpos[i]), int(gpos[t[0]]), t[1], t[2],
                            0.0 if np.isnan(rel[i]) else float(rel[i]), t[3]))
@@ -278,7 +319,7 @@ def one_trade_climax_trail(df, i, cfg, climax, trail_pct, side="SHORT"):
                 if sl == 0 or (new_sl - sl) * s > 0:
                     sl = new_sl
         if exit_price is None and climax[j]:
-            tight = c[j] * (1 - s * trail_pct / 100)  # шорт: стоп над ценой
+            tight = c[j] * (1 - s * trail_pct / 100)  # шорт: стоп над ценой, лонг — под ней
             if sl == 0 or (tight - sl) * s > 0:
                 sl = tight
         avg, size = calc.calculate_average_price(calc.orders), calc.get_total_size()
@@ -289,7 +330,7 @@ def one_trade_climax_trail(df, i, cfg, climax, trail_pct, side="SHORT"):
     return None
 
 
-def run_alt_short(p: Dict, progress: Callable[[str], None]) -> Dict:
+def run_pyramid(base: str, p: Dict, progress: Callable[[str], None]) -> Dict:
     import donchian_pyramid as dp
     import mrc_supertrend_pyramid as msp
     import short_portfolio as sp
@@ -300,7 +341,8 @@ def run_alt_short(p: Dict, progress: Callable[[str], None]) -> Dict:
     import trend_pullback_pyramid as tpp
     tpp.load_15m = msp_load
 
-    deposit = BASES["alt_short"]["deposit"]
+    deposit = deposit_of(base, p)
+    side = BASES[base]["side"]
     dp.DEPOSIT = deposit
     sp.ENTRY = p["first_order"]
 
@@ -314,7 +356,7 @@ def run_alt_short(p: Dict, progress: Callable[[str], None]) -> Dict:
     by_coin = {}
     for coin in p["coins"]:
         progress(f"считаю {coin}USDT")
-        by_coin[coin] = alt_coin_trades(coin, p, coin_cfg)
+        by_coin[coin] = alt_coin_trades(coin, p, coin_cfg, side)
     pnl, taken, _ = sp.portfolio(by_coin, len(p["coins"]), "first")
     equity = pd.Series(deposit + pnl, index=sp.GRID_IDX)
     idx = sp.GRID_IDX
@@ -330,19 +372,30 @@ def run_mrc_dca(p: Dict, progress: Callable[[str], None]) -> Dict:
                       tp_percent=p["tp_percent"], sl_percent=p["sl_percent"], first_order=p["first_order"])
     mrc.PARAMS["mrc"] = {**mrc.PARAMS["mrc"], "entry_band": p["entry_band"]}
     mrc.PARAMS["trend_filter"] = {**mrc.PARAMS["trend_filter"], "ema_period": p["trend_ema_period"]}
-    progress("считаю BTCUSDT")
-    df, signal = mrc.load(csv_path("BTC"))
-    keep = (df["timestamp"] >= START) & (df["timestamp"] < END)
-    df, signal = df[keep].reset_index(drop=True), signal[keep.values]
-    realized, floating, tr = mrc.simulate(df, signal)
-    deposit = BASES["mrc_dca"]["deposit"]
-    equity = pd.Series(deposit + realized + floating, index=df["timestamp"])
-    trades = tr.rename(columns={"exit_time": "exit"})[["exit", "pnl", "orders"]] if len(tr) \
+    pnls, trade_frames = [], []
+    for coin in p["coins"]:
+        progress(f"считаю {coin}USDT")
+        df, signal = mrc.load(csv_path(coin))
+        keep = (df["timestamp"] >= START) & (df["timestamp"] < END)
+        df, signal = df[keep].reset_index(drop=True), signal[keep.values]
+        realized, floating, tr = mrc.simulate(df, signal)
+        pnls.append(pd.Series(realized + floating, index=df["timestamp"]))
+        if len(tr):
+            trade_frames.append(tr.rename(columns={"exit_time": "exit"})[["exit", "pnl", "orders"]])
+    deposit = deposit_of("mrc_dca", p)
+    idx = pnls[0].index
+    for x in pnls[1:]:
+        idx = idx.union(x.index)
+    total = sum(x.reindex(idx).ffill().fillna(0.0) for x in pnls)
+    equity = deposit + total
+    trades = pd.concat(trade_frames, ignore_index=True) if trade_frames \
         else pd.DataFrame(columns=["exit", "pnl", "orders"])
     return {"equity": equity, "trades": trades, "deposit": deposit, "order_count": p["safety_orders"] + 1}
 
 
-RUNNERS = {"alt_short": run_alt_short, "mrc_dca": run_mrc_dca}
+RUNNERS = {"alt_short": lambda p, pr: run_pyramid("alt_short", p, pr),
+           "trend_long": lambda p, pr: run_pyramid("trend_long", p, pr),
+           "mrc_dca": run_mrc_dca}
 
 
 def evaluate(base: str, params: Dict, progress: Callable[[str], None] = lambda s: None) -> Dict:
@@ -364,8 +417,9 @@ def run_hypothesis(base: str, changes: Dict, cache_dir: Path, progress: Callable
     """Вариант и база на тех же данных. База кэшируется по (параметры, источник данных)."""
     params = resolve(base, changes)
     base_params = resolve(base, {})
-    coins = params.get("coins") or base_params.get("coins") or []
-    sources = ensure_data(sorted(set(coins) | set(base_params.get("coins") or [])), progress)
+    def coins_of(pp):
+        return list(pp.get("coins") or [])
+    sources = ensure_data(sorted(set(coins_of(params)) | set(coins_of(base_params))), progress)
     cache_dir.mkdir(parents=True, exist_ok=True)
     data_tag = hashlib.sha1(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:8]
     base_file = cache_dir / f"baseline_{base}_{params_key(base, base_params)}_{data_tag}.json"

@@ -18,7 +18,7 @@ class Hypothesis(Base):
     title = Column(String, nullable=False)
     rationale = Column(Text, nullable=True)          # почему должно сработать
     success_criterion = Column(Text, nullable=False)  # что считаем успехом — до прогона
-    base = Column(String, nullable=False)             # alt_short | mrc_dca
+    base = Column(String, nullable=False)             # alt_short | mrc_dca | trend_long
     changes = Column(JSON, nullable=False)            # {параметр: значение}
     idea_key = Column(String, nullable=False, index=True)
     attempt = Column(Integer, nullable=False, default=1)

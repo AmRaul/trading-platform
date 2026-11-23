@@ -64,3 +64,23 @@ def test_climax_params_off_by_default():
     import hypothesis_runner as hr
     p = hr.resolve("alt_short", {})
     assert p["climax_block_hours"] == 0 and p["climax_trail_u"] == 0.0
+
+
+def test_climax_mask_for_long_marks_bearish_spike():
+    import pandas as pd
+    import hypothesis_runner as hr
+    n = 120
+    df = pd.DataFrame({"open": [10.0] * n, "close": [10.0] * n, "volume": [1.0] * n})
+    df.loc[110, ["open", "close", "volume"]] = [10.0, 9.0, 5.0]
+    assert hr.climax_mask(df, 3.0, "LONG")[110] and not hr.climax_mask(df, 3.0, "SHORT")[110]
+
+
+def test_trend_long_and_coin_params():
+    import hypothesis_runner as hr
+    p = hr.resolve("trend_long", {})
+    assert p["coins"] == ["ETH"] and hr.deposit_of("trend_long", p) == 1000.0
+    assert hr.deposit_of("trend_long", hr.resolve("trend_long", {"coins": ["ETH", "SOL"]})) == 2000.0
+    m = hr.resolve("mrc_dca", {"coins": ["btc", "ethusdt"]})
+    assert m["coins"] == ["BTC", "ETH"] and hr.deposit_of("mrc_dca", m) == 11400.0
+    assert hr.resolve("trend_long", {})["btc_regime"] == 0 and hr.resolve("alt_short", {})["min_rel_pct"] == -100.0
+    assert hr.deposit_of("alt_short", hr.resolve("alt_short", {})) == 5000.0
