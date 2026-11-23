@@ -12,6 +12,7 @@ const DEFAULT_ENTRY_SIGNAL: EntrySignal = {
 const TF_LABEL: Record<string, string> = { '60': '1h', '240': '4h', D: 'дневке' };
 
 export function signalName(s: EntrySignal | null | undefined) {
+  if (s?.type === 'donchian') return `Donchian ${s.donchian_entry_days ?? 20}/${s.donchian_exit_days ?? 10}`;
   return s?.type === 'supertrend' ? `Supertrend ${s.timeframe}m` : 'MRC';
 }
 
@@ -36,11 +37,13 @@ export default function EntrySignalFields({
           checked={!!value}
           onChange={(e) => onChange(e.target.checked ? { ...DEFAULT_ENTRY_SIGNAL } : null)}
         />
-        {value?.type === 'supertrend'
+        {value?.type === 'donchian'
+          ? `Вход по пробою максимума ${value.donchian_entry_days ?? 20} дней, выход по минимуму ${value.donchian_exit_days ?? 10} дней (1h)`
+          : value?.type === 'supertrend'
           ? `Вход по развороту ${signalName(value)}${trendLabel(value)}`
           : 'Вход по сигналу MRC (15m, полоса 2)'}
       </label>
-      {value && (
+      {value && value.type !== 'donchian' && (
         <div className="flex items-center gap-2 mt-2 text-xs">
           <span className="text-gray-400">
             Фильтр тренда EMA на {TF_LABEL[value.trend_timeframe] ?? value.trend_timeframe}

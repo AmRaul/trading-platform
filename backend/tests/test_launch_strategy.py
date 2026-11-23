@@ -166,3 +166,51 @@ def test_catalog_backtests_load():
     for s in list_strategies():
         for v in s.variants:
             ReadyStrategyBacktest(**v.backtest())
+
+
+@pytest.mark.asyncio
+async def test_launch_donchian_six_coins_without_stop():
+    req = LaunchRequest(variant_key="base", deposit_usdt=6000, exchange="paper")
+    bots = await launch_ready_strategy("donchian-long-6", req, _db(), _user())
+    assert [b.symbol for b in bots] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "XRPUSDT"]
+    for b in bots:
+        assert b.side == "LONG" and b.state == "SIGNAL"
+        assert b.config["entry_size_usdt"] == pytest.approx(1000, abs=1)
+        assert b.config["order_count"] == 1 and b.config["sl_initial"] is None
+        assert b.config["use_trailing"] is False and b.config["tp_percent"] == 100.0
+        assert b.config["entry_signal"]["type"] == "donchian"
+        assert b.config["entry_signal"]["timeframe"] == "60"
+        assert b.name == f"Лонг · пробой Donchian 20/10 · 6 монет · Базовый · {b.symbol}"
+
+
+def test_donchian_position_has_no_stop_or_adds():
+    from app.domain.ready_strategies.catalog import get_strategy
+    from app.domain.trading.entities import OrderInfo
+    from app.domain.trading.position_calculator import PositionCalculator
+    s = get_strategy("donchian-long-6")
+    calc = PositionCalculator(s.variant_preset(s.variants[0], s.legs[0]))
+    calc.add_order(OrderInfo(1, 100.0, 1000))
+    sl, _ = calc.calculate_stop_loss("LONG", calc.orders, 50.0)
+    assert sl == 0.0 and not calc.is_stop_loss_hit("LONG", 1.0, sl)
+    assert not calc.should_add_order("LONG", 1000.0, 100.0)
+    assert calc.take_profit_price("LONG") is None or calc.take_profit_price("LONG") >= 200.0
+    assert calc.exchange_sl_percent("LONG") is None
+
+
+def test_forward_test_set_donchian():
+    from app.domain.forward_test import parse, from_bot_name
+    assert parse("donchian/long") == ("donchian", "long")
+    assert from_bot_name("Лонг · пробой Donchian 20/10 · 6 монет · Базовый · BTCUSDT", "paper") == "donchian/long"
+
+
+@pytest.mark.asyncio
+async def test_donchian_paper_launch_joins_forward_test_real_does_not():
+    paper = await launch_ready_strategy("donchian-long-6", LaunchRequest(variant_key="base", deposit_usdt=6000,
+                                        exchange="paper"), _db(), _user())
+    assert {b.forward_test for b in paper} == {"donchian/long"}
+    real = await launch_ready_strategy("donchian-long-6", LaunchRequest(variant_key="base", deposit_usdt=6000,
+                                       exchange="bybit", bybit_account_id=3), _db(), _user())
+    assert {b.forward_test for b in real} == {None}
+    mrc = await launch_ready_strategy(SLUG, LaunchRequest(variant_key="conservative", deposit_usdt=5700,
+                                      exchange="paper"), _db(), _user())
+    assert mrc[0].forward_test is None

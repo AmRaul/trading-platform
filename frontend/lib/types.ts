@@ -9,7 +9,7 @@ export type BotStateName = 'IDLE' | 'WAITING' | 'SIGNAL' | 'ENTRY' | 'PYRAMIDING
 
 /** EntrySignalConfig: вход по сигналу MRC / SuperTrend с фильтром тренда */
 export interface EntrySignal {
-  type: 'mrc' | 'supertrend';
+  type: 'mrc' | 'supertrend' | 'donchian';
   timeframe: string;
   st_period?: number;
   st_mult?: number;
@@ -22,6 +22,8 @@ export interface EntrySignal {
   trend_ema_period: number | null;
   trend_ema_fast?: number | null;
   trend_timeframe: string;  // '60' | '240' | 'D'
+  donchian_entry_days?: number;
+  donchian_exit_days?: number;
 }
 
 /** StrategyConfig */

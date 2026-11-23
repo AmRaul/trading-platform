@@ -5,6 +5,9 @@ SignalEntryScheduler — раз в минуту (сразу после закр�
 Свечи сигнального ТФ закрываются на границах интервала, поэтому проверка
 идёт только для ботов, у которых на этой минуте закрылась свеча их ТФ, и
 каждый бот проверяет каждую свечу один раз.
+
+Боты с выходом по сигналу (entry_signal.type = donchian) в позиции (PYRAMIDING) проверяются
+так же — на закрытии каждой свечи своего ТФ — и закрываются по рынку, если сработал выход.
 """
 import asyncio
 import json
@@ -17,6 +20,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.adapters.bybit_market_data import BybitMarketDataAdapter
 from app.application.signals.check_entry_signal import CheckEntrySignalUseCase, INTERVAL_MS
+from app.domain.signals.entry_signal import has_signal_exit
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +67,11 @@ class SignalEntryScheduler:
         from app.models import Bot
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Bot).where(Bot.state == "SIGNAL"))
-            bots = result.scalars().all()
+            result = await db.execute(select(Bot).where(Bot.state.in_(("SIGNAL", "PYRAMIDING"))))
+            all_bots = result.scalars().all()
+        bots = [b for b in all_bots if b.state == "SIGNAL"]
+        await self._check_exits([b for b in all_bots if b.state == "PYRAMIDING"
+                                 and has_signal_exit((b.config or {}).get("entry_signal"))], now_ms)
 
         # Одинаковые symbol/side/конфиг сигнала считаем один раз
         cache: Dict[Tuple[str, str, str], object] = {}
@@ -93,6 +100,38 @@ class SignalEntryScheduler:
             )
             if signal.triggered:
                 await self._enter(bot.id)
+
+    async def _check_exits(self, bots, now_ms: int):
+        for bot in bots:
+            cfg = bot.config["entry_signal"]
+            interval = INTERVAL_MS[cfg.get("timeframe", "15")]
+            last_close = now_ms - now_ms % interval
+            key = ("exit", bot.id)
+            if self._last_checked.get(key) == last_close:
+                continue
+            self._last_checked[key] = last_close
+            try:
+                signal = await self._check.execute_exit(bot.symbol, bot.side, cfg, now_ms)
+            except Exception as e:
+                logger.error(f"[SignalScheduler] exit check bot={bot.id} failed: {e}")
+                continue
+            self.last_result[bot.id] = {"checked_at_ms": now_ms, "reason": signal.reason,
+                                        "triggered": signal.triggered, "exit_level": signal.trend_ema}
+            logger.info(f"[SignalScheduler] bot={bot.id} {bot.symbol} {bot.side} exit check → {signal.reason}")
+            if signal.triggered:
+                await self._exit(bot.id, signal.trend_close)
+
+    async def _exit(self, bot_id: int, price: float):
+        from app.services.strategy import StrategyEngine
+
+        async with AsyncSessionLocal() as db:
+            engine = StrategyEngine(bot_id, db)
+            await engine.initialize()
+            result = await engine.signal_exit(price)
+        if result.get("success"):
+            logger.info(f"[SIGNAL_EXIT] bot={bot_id} closed @ {result.get('exit_price')}")
+        else:
+            logger.error(f"[SIGNAL_EXIT] bot={bot_id} failed: {result.get('error')}")
 
     async def _enter(self, bot_id: int):
         from app.services.strategy import StrategyEngine

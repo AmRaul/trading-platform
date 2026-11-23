@@ -74,6 +74,44 @@ FORWARD_TEST_SETS: Dict[str, Dict] = {
         "notes": "тот же шорт + тейк 6% от средней после 4-го ордера; сравнивать с основным шортом за общий период",
         "parts": {"short": {"title": "Шорт альтов · пирамидинг · 5 монет · Тейк 6%", "deposit_usdt": 5000}},
     },
+    # Записано 2026-11-23 до старта (журнал разборов #8, research/donchian_long_card.py).
+    "donchian": {
+        "title": "Лонг · пробой Donchian 20/10 · 6 монет",
+        "role": "parallel",
+        "started": "2026-11-23",
+        "ends": "2027-02-18",
+        "deposit_usdt": 6000,
+        "compare_with": "portfolio/short",
+        "expectations": {
+            "annual_return_pct": 57.0,
+            "max_drawdown_pct": 33.1,  # от пика equity; от пика прибыли — до 110% депозита (2022)
+            "worst_month_pct": -15.0,
+            "month_p5_pct": -9.8,
+            "month_median_pct": -0.6,
+            "month_p95_pct": 44.0,
+            "months_positive_pct": 42,
+            "three_months_normal_pct": [-11.6, 67.6],
+            "worst_three_months_history_pct": -17.3,
+            "trades_per_month": 3.1,
+            "avg_trade_days": 21.4,
+            "win_rate_pct": 39.6,
+        },
+        "stop_criteria": [
+            "результат за любые 3 месяца хуже −20% ($1 200) — хуже худших 3 месяцев истории (−17.3%)",
+            "сверка: вход не на пробое максимума 20 дневок или выход не на пробое минимума 10 дневок",
+        ],
+        "not_a_reason": [
+            "серия мелких убытков и медианный месяц около нуля — прибыль дают редкие длинные росты",
+            "ни одной сделки за месяц: в боковике цена не выходит за канал",
+            "убыток одной сделки 20–35%: стопа нет, выход только по каналу",
+        ],
+        "final": ("кандидат в основной портфель как пара к шорту альтов, если связка «шорт + Donchian» "
+                  "за период теста не хуже одного шорта по доходности/просадке и сделки совпадают с каналом"),
+        "notes": ("сам по себе тяжёлый (2022 −36%); смысл — отрицательная корреляция с шортом альтов "
+                  "(−0.22 / −0.15 по месяцам). Выход по каналу проверяет планировщик на закрытии часа"),
+        "parts": {"long": {"title": "Лонг · пробой Donchian 20/10 · 6 монет · Базовый", "deposit_usdt": 6000,
+                           "max_drawdown_stop_pct": 20}},
+    },
 }
 
 
@@ -101,4 +139,6 @@ def from_bot_name(name: str, exchange: str) -> Optional[str]:
         return "portfolio/short"
     if name.startswith("Шорт альтов · пирамидинг · 5 монет · Тейк 6%"):
         return "take6/short"
+    if name.startswith("Лонг · пробой Donchian 20/10 · 6 монет"):
+        return "donchian/long"
     return None

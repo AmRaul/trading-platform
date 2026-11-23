@@ -79,7 +79,8 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
     .reduce((a, b) => a + b, 0);
   const gridTotal = firstOrder * gridUnits * legs.length;
   const gridMargin = gridTotal / preset.leverage;
-  const signalName = preset.entry_signal?.type === 'supertrend' ? 'Supertrend' : 'MRC';
+  const signalName = preset.entry_signal?.type === 'supertrend' ? 'Supertrend'
+    : preset.entry_signal?.type === 'donchian' ? 'Donchian' : 'MRC';
 
   const launch = useMutation({
     mutationFn: () =>
@@ -199,7 +200,7 @@ function LaunchModal({ strategy, variant, onClose }: { strategy: any; variant: a
               ? `Будет создано ${legs.length} ботов (${legs.map((x) => x.replace('USDT', '')).join(', ')}) на общий депозит, каждый сразу перейдёт`
               : 'Бот будет создан и сразу перейдёт'}{' '}
             в ожидание сигнала {signalName}. Позиция откроется автоматически на
-            закрытии 15-минутной свечи, когда сработает сигнал. Результаты на истории не гарантируют доходность.
+            закрытии {preset.entry_signal?.timeframe === '60' ? 'часовой' : '15-минутной'} свечи, когда сработает сигнал. Результаты на истории не гарантируют доходность.
           </p>
 
           {error && <p className="text-sm text-red-400">{typeof error === 'string' ? error : 'Не удалось запустить'}</p>}

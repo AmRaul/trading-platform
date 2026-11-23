@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 class EntrySignalConfig(BaseModel):
     """Автоматический вход по сигналу индикатора вместо ручного/лимитного."""
 
-    # mrc — цена в полосе MRC; supertrend — разворот Supertrend в сторону сделки
-    type: str = Field(default="mrc", pattern="^(mrc|supertrend)$")
+    # mrc — цена в полосе MRC; supertrend — разворот Supertrend в сторону сделки;
+    # donchian — пробой канала дневок (вход), выход — пробой канала с другой стороны
+    type: str = Field(default="mrc", pattern="^(mrc|supertrend|donchian)$")
     timeframe: str = Field(default="15", pattern="^(1|3|5|15|30|60|120|240)$")  # Bybit kline interval, минуты
     st_period: int = Field(default=10, ge=2, le=100)
     st_mult: float = Field(default=3.0, gt=0, le=10)
@@ -26,6 +27,9 @@ class EntrySignalConfig(BaseModel):
     # Доп. условие режима: LONG — EMA fast выше EMA trend_ema_period, SHORT — ниже
     trend_ema_fast: Optional[int] = Field(default=None, ge=2, le=500)
     trend_timeframe: str = Field(default="D", pattern="^(60|240|D)$")
+    # Donchian: канал по закрытым дневкам; выход проверяется планировщиком на каждой свече timeframe
+    donchian_entry_days: int = Field(default=20, ge=2, le=200)
+    donchian_exit_days: int = Field(default=10, ge=2, le=200)
 
 
 class StrategyConfig(BaseModel):

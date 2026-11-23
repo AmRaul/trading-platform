@@ -1,7 +1,9 @@
 """
 Сигналы входа — чистая логика без I/O:
   - «MRC + фильтр тренда» (services/backtester/research/mrc_dca_trend_long.py);
-  - «разворот Supertrend + режим тренда» (services/backtester/research/trend_pullback_pyramid.py).
+  - «разворот Supertrend + режим тренда» (services/backtester/research/trend_pullback_pyramid.py);
+  - «пробой канала Donchian по дневкам» (services/backtester/research/long_trend_classic.py, V2):
+    вход — close сигнальной свечи выше максимума N закрытых дневок, выход — close ниже минимума M дневок.
 
 На вход только ЗАКРЫТЫЕ свечи (самая старая первой). Решение принимается по
 последней закрытой свече сигнального ТФ и последней закрытой свече трендового ТФ —
@@ -120,7 +122,58 @@ def evaluate_supertrend_entry(
     return EntrySignalResult(triggered, None, trend_ok, trend_close, trend_ema, reason)
 
 
-EVALUATORS = {"mrc": evaluate_mrc_entry, "supertrend": evaluate_supertrend_entry}
+def _donchian_level(daily: Optional[List[Dict]], days: int, kind: str):
+    """Максимум high (kind="high") или минимум low последних days ЗАКРЫТЫХ дневок; None — мало свечей."""
+    if not daily or len(daily) < days:
+        return None
+    window = daily[-days:]
+    return max(c["high"] for c in window) if kind == "high" else min(c["low"] for c in window)
+
+
+def evaluate_donchian_entry(
+    side: str,
+    signal_candles: List[Dict],
+    trend_candles: Optional[List[Dict]],
+    cfg: Dict,
+) -> EntrySignalResult:
+    """LONG: close последней закрытой свечи сигнального ТФ выше максимума donchian_entry_days
+    закрытых дневок (SHORT — ниже минимума). Условие уровня, не пересечения: как в бэктесте,
+    после выхода бот снова входит, если цена всё ещё выше канала."""
+    days = cfg.get("donchian_entry_days", 20)
+    if not signal_candles:
+        return EntrySignalResult(False, reason="нет закрытых свечей")
+    level = _donchian_level(trend_candles, days, "high" if side == "LONG" else "low")
+    if level is None:
+        return EntrySignalResult(False, reason=f"мало дневных свечей для канала {days} дней")
+    close = float(signal_candles[-1]["close"])
+    hit = close > level if side == "LONG" else close < level
+    reason = "сигнал" if hit else f"close {close:g} {'≤' if side == 'LONG' else '≥'} канал {days}д {level:g}"
+    return EntrySignalResult(bool(hit), None, None, close, float(level), reason)
+
+
+def evaluate_donchian_exit(side: str, signal_candles: List[Dict], daily: Optional[List[Dict]],
+                           cfg: Dict) -> EntrySignalResult:
+    """Выход: LONG — close последней закрытой свечи ниже минимума donchian_exit_days закрытых дневок
+    (SHORT — выше максимума). trend_ema в результате — уровень выхода."""
+    days = cfg.get("donchian_exit_days", 10)
+    if not signal_candles:
+        return EntrySignalResult(False, reason="нет закрытых свечей")
+    level = _donchian_level(daily, days, "low" if side == "LONG" else "high")
+    if level is None:
+        return EntrySignalResult(False, reason=f"мало дневных свечей для канала {days} дней")
+    close = float(signal_candles[-1]["close"])
+    hit = close < level if side == "LONG" else close > level
+    reason = "выход" if hit else f"держим: close {close:g}, выход за {level:g}"
+    return EntrySignalResult(bool(hit), None, None, close, float(level), reason)
+
+
+EVALUATORS = {"mrc": evaluate_mrc_entry, "supertrend": evaluate_supertrend_entry,
+              "donchian": evaluate_donchian_entry}
+EXIT_EVALUATORS = {"donchian": evaluate_donchian_exit}
+
+
+def has_signal_exit(cfg: Optional[Dict]) -> bool:
+    return bool(cfg) and cfg.get("type") in EXIT_EVALUATORS
 
 
 def evaluate_entry(side: str, signal_candles: List[Dict], trend_candles: Optional[List[Dict]],

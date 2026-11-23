@@ -113,6 +113,7 @@ async def launch_ready_strategy(
             config=config.model_dump(),
             state="SIGNAL",
             is_active=False,
+            forward_test=variant.paper_forward_test if request.exchange == "paper" else None,
         ))
 
     for bot in bots:
