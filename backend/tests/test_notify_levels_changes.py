@@ -166,7 +166,7 @@ def test_diff_new_position_is_not_a_stop_move():
 # --- комплекты форвард-теста ----------------------------------------------------
 
 def test_forward_test_values_and_parse():
-    assert set(ft.valid_values()) == {"portfolio/mrc", "portfolio/short", "take6/short"}
+    assert set(ft.valid_values()) == {"portfolio/mrc", "portfolio/short", "take6/short", "donchian/long"}
     assert ft.parse("portfolio/short") == ("portfolio", "short")
     assert ft.parse("portfolio/xxx") is None and ft.parse("take6") is None and ft.parse(None) is None
 

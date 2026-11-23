@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 EVENTS = {"position_opened", "pyramiding_order_added", "position_closed", "straddle_finished"}
 
 EXIT_REASONS = {
-    "TP_HIT": "тейк", "SL_HIT": "стоп", "TRAILING_STOP": "трейлинг", "MANUAL_CLOSE": "вручную",
+    "TP_HIT": "тейк", "SL_HIT": "стоп", "TRAILING_STOP": "трейлинг", "MANUAL_CLOSE": "вручную", "SIGNAL_EXIT": "выход по каналу",
     "EXCHANGE_CLOSED": "закрыта на бирже", "TIME_STOP": "стоп по времени", "MAX_REARMS": "лимит пил",
 }
 

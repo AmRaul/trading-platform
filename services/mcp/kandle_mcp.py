@@ -296,7 +296,7 @@ async def what_changed(since: Optional[str] = None, remember: bool = True) -> Di
 async def forward_test_sets() -> Dict:
     """Комплекты бумажного форвард-теста: ожидания (бэктест, записаны до старта),
     критерии остановки, что НЕ повод вмешиваться, итог и боты каждой части.
-    portfolio — основной (цифры и критерии теста только по нему), take6 — параллельный.
+    portfolio — основной (цифры и критерии теста только по нему), take6 и donchian — параллельные.
     Группы portfolio_summary «forward_test:<комплект>/<часть>» — это они."""
     return await api.get("/api/analytics/forward-test")
 
@@ -363,7 +363,8 @@ async def account_overview(account_id: Optional[int] = None, days: int = 30) -> 
 
 @mcp.tool(annotations=READ)
 async def research_bases() -> Dict:
-    """Какие стратегии можно проверять гипотезами (alt_short — шорт альтов, mrc_dca — MRC DCA BTC),
+    """Какие стратегии можно проверять гипотезами (alt_short — шорт альтов, trend_long — то же
+    зеркально в лонг, по умолчанию ETH; mrc_dca — MRC DCA, по умолчанию BTC, монеты — параметр coins, итог по сумме ботов),
     какие параметры менять, их значения у живых ботов и допустимые пределы, периоды
     (обучающий 2021-01 → 2024-07, отложенный 2024-07 → 2026-10)."""
     return await api.get("/api/research/bases")
@@ -455,19 +456,26 @@ def monthly_review(since: str, until: Optional[str] = None) -> str:
 - take6 — параллельный комплект (тот же шорт + тейк 6% от средней после 4-го ордера, $5 000), в цифры
   портфеля и критерии не входит. Сравнивай с portfolio/short ЗА ТОТ ЖЕ период (с первой сделки комплекта):
   разница в PnL, просадке, доле выходов по тейку (exit_reason TP_HIT).
+- donchian — параллельный комплект с 23.11.2026: лонг, пробой Donchian 20/10, 6 монет по $1 000 ($6 000),
+  без стопа, выход по каналу (exit_reason SIGNAL_EXIT). Сам по себе тяжёлый, смысл — пара к шорту:
+  сравни связку portfolio/short + donchian/long с одним portfolio/short за общий период. Сверка
+  reconcile для его сделок показывает manual (выход по каналу replay не повторяет) — это не поломка;
+  проверяй вход/выход по каналу через get_market_context, если есть сомнения.
 - боты без forward_test (ручные, напр. HYPEUSDT) — одной строкой, вне форвард-теста.
 
 Шаги:
 1. forward_test_sets() — ожидания и состав комплектов; bots_health — все ли боты комплектов живы.
 2. portfolio_summary(since="{since}"{f', until="{until}"' if until else ''}, exchange="paper") — группы
-   «forward_test:portfolio/mrc», «forward_test:portfolio/short», «forward_test:take6/short».
+   «forward_test:portfolio/mrc», «forward_test:portfolio/short», «forward_test:take6/short»,
+   «forward_test:donchian/long».
 3. get_market_context("BTCUSDT", "1d") — режим BTC (объясняет активность MRC).
 3a. Сверка с бэктестом (критерий 4): reconcile_trades(since="{since}"{f', until="{until}"' if until else ''})
    — все закрытые сделки периода одной сводкой. mismatch по любой — назови его первым: это критерий
    остановки, результат до починки не считается (детали — reconcile_position по position_id из not_match).
    price_drift — приведи средний разрыв цены; это проскальзывание, не поломка.
 4. Сравни основной портфель с ожиданиями: доходность в % от депозитов, просадка, число сделок, доля
-   полных сеток у шорта. Затем — take6 против своих ожиданий и против portfolio/short.
+   полных сеток у шорта. Затем — take6 против своих ожиданий и против portfolio/short; donchian — против
+   своих ожиданий (медианный месяц около нуля — норма) и связка short + donchian против одного short.
    Отдельно: сработал ли какой-то критерий остановки.
 5. Вывод одной строкой: «в пределах ожиданий» / «хуже ожиданий, но в норме» / «критерий остановки».
    Никаких советов менять параметры — до 2027-02-18 они заморожены.

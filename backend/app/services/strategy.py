@@ -477,6 +477,26 @@ class StrategyEngine:
             self._is_closing = False
 
     @_in_session
+    async def signal_exit(self, fallback_price: float) -> Dict:
+        """Выход по сигналу (канал Donchian) — вызывает SignalEntryScheduler на закрытии свечи.
+        Закрытие по рынку, цена — текущий тикер (в бэктесте — open следующей свечи)."""
+        if self.current_state != BotState.PYRAMIDING or not self.position or not self.position.is_open:
+            return {"success": False, "error": "No open position"}
+        if not self.position.is_bot_managed:
+            return {"success": False, "error": "Позиция под ручным управлением — бот её не закрывает"}
+        try:
+            from app.services.bybit import bybit_client
+            ticker = await bybit_client.get_ticker(self.bot.symbol)
+            price = float(ticker["lastPrice"]) if ticker else fallback_price
+            result = await self._close_position(price, "SIGNAL_EXIT")
+            if not result.get("success"):
+                return {"success": False, "error": result.get("error") or "Позиция не закрылась на бирже"}
+            return {"success": True, "exit_price": price}
+        except Exception as e:
+            logger.error(f"Error in signal_exit: {e}")
+            return {"success": False, "error": str(e)}
+
+    @_in_session
     async def manual_close(self) -> Dict:
         if self.straddle:
             return await self.straddle.manual_close()

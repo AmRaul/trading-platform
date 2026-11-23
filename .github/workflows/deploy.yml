@@ -63,7 +63,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
-      - run: cd backend && alembic upgrade e6f7a8b9c0d1 && PYTHONPATH=. python integration/analytics_changes.py && PYTHONPATH=. python integration/engine_session.py && PYTHONPATH=. python integration/users_telegram.py
+      - run: cd backend && alembic upgrade e6f7a8b9c0d1 && PYTHONPATH=. python integration/analytics_changes.py && PYTHONPATH=. python integration/engine_session.py && PYTHONPATH=. python integration/donchian_exit.py && PYTHONPATH=. python integration/users_telegram.py
 
   test-backtester:
     name: Tests · backtester

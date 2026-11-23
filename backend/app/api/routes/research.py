@@ -50,7 +50,7 @@ class HypothesisCreate(BaseModel):
     title: str = Field(min_length=3, max_length=200)
     rationale: Optional[str] = Field(default=None, max_length=5000)
     success_criterion: str = Field(min_length=10, max_length=2000)
-    base: str = Field(pattern="^(alt_short|mrc_dca)$")
+    base: str = Field(pattern="^(alt_short|mrc_dca|trend_long)$")
     changes: Dict[str, Any] = Field(min_length=1)
 
 
