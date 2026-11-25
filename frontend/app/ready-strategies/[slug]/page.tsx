@@ -18,6 +18,8 @@ import {
 } from 'recharts';
 import { readyStrategiesApi, accountsApi, bybitAccountsApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
+import PublicHeader from '@/components/PublicHeader';
+import { useIsAuthed } from '@/lib/useSession';
 import { ArrowLeft, Play, AlertTriangle, X } from 'lucide-react';
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
@@ -227,13 +229,14 @@ export default function ReadyStrategyPage() {
 
   const [variantKey, setVariantKey] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
+  const authed = useIsAuthed();
   const variant = s?.variants.find((v: any) => v.key === variantKey) ?? s?.variants[0];
   const bt = variant?.backtest;
   const m = bt?.metrics;
 
   return (
     <div className="min-h-screen bg-gray-900">
-      <Navbar />
+      {authed === false ? <PublicHeader /> : <Navbar />}
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         <Link href="/ready-strategies" className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-white mb-6">
@@ -252,6 +255,14 @@ export default function ReadyStrategyPage() {
                   {s.symbols.map((x: string) => x.replace('USDT', '')).join(' · ')} · {s.side} · {s.timeframe}
                 </p>
               </div>
+              {authed === false ? (
+                <Link
+                  href="/login"
+                  className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium bg-blue-600 hover:bg-blue-700"
+                >
+                  <Play size={18} /> Войти, чтобы запустить
+                </Link>
+              ) : (
               <button
                 onClick={() => setLaunchOpen(true)}
                 disabled={!s.launch_available}
@@ -260,6 +271,7 @@ export default function ReadyStrategyPage() {
               >
                 <Play size={18} /> Запустить · {variant.name}
               </button>
+              )}
             </div>
 
             <p className="text-gray-300 mb-8 max-w-4xl">{s.description}</p>

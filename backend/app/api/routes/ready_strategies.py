@@ -26,8 +26,10 @@ def _base(s: ReadyStrategy) -> dict:
     }
 
 
+# Каталог и карточки открыты без входа (витрина kandle.tech/ready-strategies): там только описание
+# стратегий, пресеты и бэктесты. Запуск — только с входом.
 @router.get("/", response_model=List[ReadyStrategyListItem])
-async def get_ready_strategies(current_user: User = Depends(get_current_user)):
+async def get_ready_strategies():
     return [
         {**_base(s), "variants": [
             {"key": v.key, "name": v.name, "metrics": v.backtest()["metrics"]} for v in s.variants
@@ -37,7 +39,7 @@ async def get_ready_strategies(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/{slug}", response_model=ReadyStrategyDetail)
-async def get_ready_strategy(slug: str, current_user: User = Depends(get_current_user)):
+async def get_ready_strategy(slug: str):
     s = get_strategy(slug)
     if not s:
         raise HTTPException(status_code=404, detail="Strategy not found")
