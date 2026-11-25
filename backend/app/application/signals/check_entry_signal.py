@@ -18,6 +18,8 @@ TREND_CANDLES = 1000
 INTERVAL_MS = {"1": 60_000, "3": 180_000, "5": 300_000, "15": 900_000, "30": 1_800_000,
                "60": 3_600_000, "120": 7_200_000, "240": 14_400_000, "D": 86_400_000}
 
+NO_DATA = EntrySignalResult(False, reason="биржа не отдала свечи, повтор через минуту", data_missing=True)
+
 
 class CheckEntrySignalUseCase:
     """Загружает закрытые свечи и проверяет сигнал входа для одного symbol/side/конфига."""
@@ -26,25 +28,36 @@ class CheckEntrySignalUseCase:
         self.market_data = market_data
 
     async def _candles(self, symbol: str, cfg: Dict, now_ms: int):
+        """None — биржа не отдала один из рядов (адаптер при ошибке возвращает [])."""
         tf = cfg.get("timeframe", "15")
         raw = await self.market_data.get_klines(symbol, tf, SIGNAL_CANDLES)
+        if not raw:
+            return None
         signal_candles = closed_candles(raw, INTERVAL_MS[tf], now_ms)
         daily = None
         if cfg.get("type") == "donchian":
             # канал Donchian — по закрытым дневкам
             raw_d = await self.market_data.get_klines(symbol, "D", 250)
+            if not raw_d:
+                return None
             daily = closed_candles(raw_d, INTERVAL_MS["D"], now_ms)
         return signal_candles, daily
 
     async def execute_exit(self, symbol: str, side: str, cfg: Dict, now_ms: Optional[int] = None) -> EntrySignalResult:
         """Сигнал выхода для открытой позиции (сейчас — только donchian)."""
         now_ms = now_ms or int(time.time() * 1000)
-        signal_candles, daily = await self._candles(symbol, cfg, now_ms)
+        got = await self._candles(symbol, cfg, now_ms)
+        if got is None:
+            return NO_DATA
+        signal_candles, daily = got
         return EXIT_EVALUATORS[cfg["type"]](side, signal_candles, daily, cfg)
 
     async def execute(self, symbol: str, side: str, cfg: Dict, now_ms: Optional[int] = None) -> EntrySignalResult:
         now_ms = now_ms or int(time.time() * 1000)
-        signal_candles, daily = await self._candles(symbol, cfg, now_ms)
+        got = await self._candles(symbol, cfg, now_ms)
+        if got is None:
+            return NO_DATA
+        signal_candles, daily = got
         if cfg.get("type") == "donchian":
             return evaluate_entry(side, signal_candles, daily, cfg)
 
@@ -52,6 +65,8 @@ class CheckEntrySignalUseCase:
         if cfg.get("trend_ema_period"):
             ttf = cfg.get("trend_timeframe", "D")
             raw_trend = await self.market_data.get_klines(symbol, ttf, TREND_CANDLES)
+            if not raw_trend:
+                return NO_DATA
             trend_candles = closed_candles(raw_trend, INTERVAL_MS[ttf], now_ms)
 
         return evaluate_entry(side, signal_candles, trend_candles, cfg)
