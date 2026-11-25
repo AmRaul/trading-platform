@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { readyStrategiesApi } from '@/lib/api';
 import Navbar from '@/components/Navbar';
+import PublicHeader from '@/components/PublicHeader';
+import { useIsAuthed } from '@/lib/useSession';
 import { TrendingUp, TrendingDown, ChevronRight } from 'lucide-react';
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
@@ -26,10 +28,11 @@ export default function ReadyStrategiesPage() {
     queryKey: ['ready-strategies'],
     queryFn: async () => (await readyStrategiesApi.getAll()).data,
   });
+  const authed = useIsAuthed();
 
   return (
     <div className="min-h-screen bg-gray-900">
-      <Navbar />
+      {authed === false ? <PublicHeader /> : <Navbar />}
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         <h1 className="text-3xl font-bold mb-2">Готовые стратегии</h1>
