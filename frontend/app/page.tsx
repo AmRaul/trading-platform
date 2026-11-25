@@ -26,6 +26,9 @@ export default function Home() {
       >
         Войти
       </Link>
+      <Link href="/ready-strategies" className="text-sm text-gray-400 hover:text-white">
+        Готовые стратегии
+      </Link>
     </main>
   );
 }
